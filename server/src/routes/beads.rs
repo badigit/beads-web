@@ -408,6 +408,19 @@ async fn read_beads_from_cli(project_path: &Path, updated_after: Option<&str>) -
     Ok(beads)
 }
 
+/// Returns `true` if a JSONL line is a non-issue record that should be skipped.
+///
+/// Newer `bd` versions append service records (e.g. `bd remember` memories)
+/// into `issues.jsonl`, marked with a `_type` field and lacking an `id`.
+/// These must not be parsed as beads. We treat the presence of a top-level
+/// `_type` key as the discriminator so future record types are skipped too.
+fn is_non_issue_record(line: &str) -> bool {
+    matches!(
+        serde_json::from_str::<serde_json::Value>(line),
+        Ok(serde_json::Value::Object(ref obj)) if obj.contains_key("_type")
+    )
+}
+
 /// Reads beads from the JSONL file (fallback when bd CLI is unavailable).
 fn read_beads_from_jsonl(issues_path: &Path) -> Result<Vec<Bead>, String> {
     let contents = std::fs::read_to_string(issues_path)
@@ -417,6 +430,10 @@ fn read_beads_from_jsonl(issues_path: &Path) -> Result<Vec<Bead>, String> {
     for (line_num, line) in contents.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() {
+            continue;
+        }
+        if is_non_issue_record(line) {
+            tracing::debug!("Skipping non-issue record at line {}", line_num + 1);
             continue;
         }
         match serde_json::from_str::<Bead>(line) {
@@ -993,6 +1010,15 @@ pub fn recompute_epic_statuses(issues_path: &Path) -> Result<Vec<String>, String
 
         match serde_json::from_str::<serde_json::Value>(line) {
             Ok(value) => {
+                // Skip non-issue service records (e.g. `bd remember` memories),
+                // but keep them in raw_lines for lossless write-back.
+                if value
+                    .as_object()
+                    .map_or(false, |o| o.contains_key("_type"))
+                {
+                    raw_lines.push(value);
+                    continue;
+                }
                 match serde_json::from_value::<Bead>(value.clone()) {
                     Ok(bead) => beads.push(bead),
                     Err(e) => {
@@ -1135,6 +1161,25 @@ pub fn recompute_epic_statuses(issues_path: &Path) -> Result<Vec<String>, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_non_issue_record_memory() {
+        assert!(is_non_issue_record(
+            r#"{"_type":"memory","key":"k","value":"v"}"#
+        ));
+    }
+
+    #[test]
+    fn test_is_non_issue_record_issue() {
+        assert!(!is_non_issue_record(
+            r#"{"id":"x-1","title":"T","status":"open"}"#
+        ));
+    }
+
+    #[test]
+    fn test_is_non_issue_record_garbage() {
+        assert!(!is_non_issue_record("not json"));
+    }
 
     #[test]
     fn test_parse_bead() {
