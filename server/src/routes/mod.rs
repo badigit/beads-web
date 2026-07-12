@@ -54,7 +54,7 @@ static BD_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 pub fn find_bd() -> Option<&'static PathBuf> {
     BD_PATH.get_or_init(|| {
         // Try PATH first
-        if let Ok(output) = std::process::Command::new(if cfg!(windows) { "where" } else { "which" })
+        if let Ok(output) = crate::process::hidden_std_command(if cfg!(windows) { "where" } else { "which" })
             .arg("bd")
             .output()
         {

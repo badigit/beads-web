@@ -5,7 +5,7 @@
 use axum::{extract::Query, http::StatusCode, response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::process::Command;
+use crate::process::hidden_command;
 
 use super::validate_path_security;
 
@@ -98,7 +98,7 @@ pub async fn branch_status(Query(params): Query<GitStatusParams>) -> impl IntoRe
 
 /// Check if a branch exists in the repository.
 async fn check_branch_exists(repo_path: &str, branch: &str) -> bool {
-    let output = Command::new("git")
+    let output = hidden_command("git")
         .args(["rev-parse", "--verify", branch])
         .current_dir(repo_path)
         .output()
@@ -113,7 +113,7 @@ async fn get_ahead_behind(repo_path: &str, branch: &str) -> (i32, i32) {
     let base_branches = ["main", "master"];
 
     for base in base_branches {
-        let output = Command::new("git")
+        let output = hidden_command("git")
             .args([
                 "rev-list",
                 "--left-right",
@@ -142,7 +142,7 @@ async fn get_ahead_behind(repo_path: &str, branch: &str) -> (i32, i32) {
 
 /// Check if the repository has uncommitted changes.
 async fn check_dirty(repo_path: &str) -> bool {
-    let output = Command::new("git")
+    let output = hidden_command("git")
         .args(["status", "--porcelain"])
         .current_dir(repo_path)
         .output()

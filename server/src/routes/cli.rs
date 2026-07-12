@@ -6,7 +6,7 @@ use axum::{http::StatusCode, response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
-use tokio::process::Command;
+use crate::process::hidden_command;
 
 use super::validate_path_security;
 
@@ -112,7 +112,7 @@ pub async fn bd_command(Json(req): Json<BdCommandRequest>) -> impl IntoResponse 
             ).into_response();
         }
     };
-    let mut cmd = Command::new(bd_path);
+    let mut cmd = hidden_command(bd_path);
     cmd.args(&req.args).current_dir(&cwd);
 
     let result = tokio::time::timeout(Duration::from_secs(30), cmd.output()).await;

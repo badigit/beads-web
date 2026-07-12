@@ -365,11 +365,11 @@ pub async fn perform_update(
             info!("Spawning updater script: {}", script_path.display());
 
             let spawn_result = if cfg!(windows) {
-                std::process::Command::new("cmd")
+                crate::process::hidden_std_command("cmd")
                     .args(["/C", "start", "/B", "", script_path.to_str().unwrap_or("")])
                     .spawn()
             } else {
-                std::process::Command::new("sh")
+                crate::process::hidden_std_command("sh")
                     .arg(&script_path)
                     .spawn()
             };

@@ -293,12 +293,12 @@ pub async fn open_external(Json(request): Json<OpenExternalRequest>) -> impl Int
     let result = match request.target.as_str() {
         "vscode" => {
             // Try "code" command first, fall back to macOS open command
-            let code_result = std::process::Command::new("code").arg(&path).spawn();
+            let code_result = crate::process::hidden_std_command("code").arg(&path).spawn();
             if code_result.is_err() {
                 // Fallback for macOS: use open -a "Visual Studio Code"
                 #[cfg(target_os = "macos")]
                 {
-                    std::process::Command::new("open")
+                    crate::process::hidden_std_command("open")
                         .args(["-a", "Visual Studio Code"])
                         .arg(&path)
                         .spawn()
@@ -313,12 +313,12 @@ pub async fn open_external(Json(request): Json<OpenExternalRequest>) -> impl Int
         }
         "cursor" => {
             // Try "cursor" command first, fall back to macOS open command
-            let cursor_result = std::process::Command::new("cursor").arg(&path).spawn();
+            let cursor_result = crate::process::hidden_std_command("cursor").arg(&path).spawn();
             if cursor_result.is_err() {
                 // Fallback for macOS: use open -a "Cursor"
                 #[cfg(target_os = "macos")]
                 {
-                    std::process::Command::new("open")
+                    crate::process::hidden_std_command("open")
                         .args(["-a", "Cursor"])
                         .arg(&path)
                         .spawn()

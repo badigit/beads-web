@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
-use tokio::process::Command;
+use crate::process::hidden_command;
 
 use super::validate_path_security;
 
@@ -219,7 +219,7 @@ pub async fn create_worktree(Json(request): Json<CreateWorktreeRequest>) -> impl
     }
 
     // Create the worktree with a new branch
-    let output = Command::new("git")
+    let output = hidden_command("git")
         .args([
             "worktree",
             "add",
@@ -245,7 +245,7 @@ pub async fn create_worktree(Json(request): Json<CreateWorktreeRequest>) -> impl
             // Check if branch already exists (perhaps worktree was removed but branch exists)
             if stderr.contains("already exists") {
                 // Try to add worktree using existing branch
-                let retry_output = Command::new("git")
+                let retry_output = hidden_command("git")
                     .args([
                         "worktree",
                         "add",
@@ -357,7 +357,7 @@ pub async fn delete_worktree(Json(request): Json<DeleteWorktreeRequest>) -> impl
     }
 
     // Remove the worktree
-    let output = Command::new("git")
+    let output = hidden_command("git")
         .args(["worktree", "remove", &worktree_path.to_string_lossy()])
         .current_dir(&request.repo_path)
         .output()
@@ -369,7 +369,7 @@ pub async fn delete_worktree(Json(request): Json<DeleteWorktreeRequest>) -> impl
             let stderr = String::from_utf8_lossy(&output.stderr);
             // Try force remove if there are untracked changes
             if stderr.contains("contains modified or untracked files") {
-                let force_output = Command::new("git")
+                let force_output = hidden_command("git")
                     .args([
                         "worktree",
                         "remove",
@@ -415,14 +415,14 @@ pub async fn delete_worktree(Json(request): Json<DeleteWorktreeRequest>) -> impl
 
     if worktree_removed {
         // Delete local branch (ignore errors - branch may not exist or be already deleted)
-        let _ = Command::new("git")
+        let _ = hidden_command("git")
             .args(["branch", "-D", &branch_name])
             .current_dir(&request.repo_path)
             .output()
             .await;
 
         // Close the bead (ignore errors - bead may not exist or already be closed)
-        let _ = Command::new("bd")
+        let _ = hidden_command("bd")
             .args(["close", &request.bead_id])
             .current_dir(&request.repo_path)
             .output()
@@ -487,7 +487,7 @@ pub async fn list_worktrees(Query(params): Query<ListWorktreesParams>) -> impl I
     }
 
     // List worktrees
-    let output = Command::new("git")
+    let output = hidden_command("git")
         .args(["worktree", "list", "--porcelain"])
         .current_dir(&params.repo_path)
         .output()
@@ -791,7 +791,7 @@ pub async fn create_pr(Json(request): Json<CreatePrRequest>) -> impl IntoRespons
     let branch_name = format!("bd-{}", request.bead_id);
 
     // Check if a merged PR already exists for this branch
-    let check_output = Command::new("gh")
+    let check_output = hidden_command("gh")
         .args([
             "pr",
             "list",
@@ -844,7 +844,7 @@ pub async fn create_pr(Json(request): Json<CreatePrRequest>) -> impl IntoRespons
     }
 
     // Create PR using gh cli
-    let output = Command::new("gh")
+    let output = hidden_command("gh")
         .args([
             "pr",
             "create",
@@ -974,7 +974,7 @@ pub async fn merge_pr(Json(request): Json<MergePrRequest>) -> impl IntoResponse 
     // Merge PR using gh cli
     // Note: Don't use --delete-branch as it fails when branch is used by a worktree.
     // The cleanup step (delete_worktree) handles branch deletion.
-    let output = Command::new("gh")
+    let output = hidden_command("gh")
         .args(["pr", "merge", &branch_name, merge_flag])
         .current_dir(&request.repo_path)
         .output()
@@ -1108,7 +1108,7 @@ pub async fn pr_files(Query(params): Query<PrFilesParams>) -> impl IntoResponse 
 
     // Step 3: Fetch PR files using gh api
     let api_path = format!("repos/{}/pulls/{}/files?per_page=100", nwo, pr_number);
-    let output = Command::new("gh")
+    let output = hidden_command("gh")
         .args(["api", &api_path])
         .current_dir(&params.repo_path)
         .output()
@@ -1183,7 +1183,7 @@ pub async fn pr_files(Query(params): Query<PrFilesParams>) -> impl IntoResponse 
 
 /// Get the PR number for a branch using gh pr view.
 async fn get_pr_number(repo_path: &str, branch: &str) -> Option<i32> {
-    let output = Command::new("gh")
+    let output = hidden_command("gh")
         .args(["pr", "view", branch, "--json", "number"])
         .current_dir(repo_path)
         .output()
@@ -1201,7 +1201,7 @@ async fn get_pr_number(repo_path: &str, branch: &str) -> Option<i32> {
 
 /// Get the repository name with owner (e.g. "owner/repo") using gh repo view.
 async fn get_repo_nwo(repo_path: &str) -> Option<String> {
-    let output = Command::new("gh")
+    let output = hidden_command("gh")
         .args(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])
         .current_dir(repo_path)
         .output()
@@ -1229,7 +1229,7 @@ async fn get_ahead_behind_worktree(repo_path: &str, branch: &str) -> (i32, i32) 
     let base_branches = ["main", "master"];
 
     for base in base_branches {
-        let output = Command::new("git")
+        let output = hidden_command("git")
             .args([
                 "rev-list",
                 "--left-right",
@@ -1258,7 +1258,7 @@ async fn get_ahead_behind_worktree(repo_path: &str, branch: &str) -> (i32, i32) 
 
 /// Check if a worktree has uncommitted changes.
 async fn check_worktree_dirty(worktree_path: &str) -> bool {
-    let output = Command::new("git")
+    let output = hidden_command("git")
         .args(["status", "--porcelain"])
         .current_dir(worktree_path)
         .output()
@@ -1280,7 +1280,7 @@ fn get_last_modified(path: &Path) -> Option<DateTime<Utc>> {
 
 /// Check if repository has a remote.
 async fn check_has_remote(repo_path: &str) -> bool {
-    let output = Command::new("git")
+    let output = hidden_command("git")
         .args(["remote"])
         .current_dir(repo_path)
         .output()
@@ -1294,11 +1294,12 @@ async fn check_has_remote(repo_path: &str) -> bool {
 
 /// Check if a branch has been pushed to remote.
 async fn check_branch_pushed(repo_path: &str, branch: &str) -> bool {
-    let output = Command::new("git")
-        .args(["ls-remote", "--heads", "origin", branch])
-        .current_dir(repo_path)
-        .output()
-        .await;
+    let output = crate::process::output_with_timeout(
+        hidden_command("git")
+            .args(["ls-remote", "--heads", "origin", branch])
+            .current_dir(repo_path),
+    )
+    .await;
 
     match output {
         Ok(o) => !o.stdout.is_empty(),
@@ -1308,11 +1309,12 @@ async fn check_branch_pushed(repo_path: &str, branch: &str) -> bool {
 
 /// Get rate limit information from GitHub API.
 async fn get_rate_limit(repo_path: &str) -> RateLimitInfo {
-    let output = Command::new("gh")
-        .args(["api", "rate_limit", "--jq", ".rate"])
-        .current_dir(repo_path)
-        .output()
-        .await;
+    let output = crate::process::output_with_timeout(
+        hidden_command("gh")
+            .args(["api", "rate_limit", "--jq", ".rate"])
+            .current_dir(repo_path),
+    )
+    .await;
 
     match output {
         Ok(output) if output.status.success() => {
@@ -1344,17 +1346,17 @@ async fn get_rate_limit(repo_path: &str) -> RateLimitInfo {
 /// Get PR information for a branch.
 async fn get_pr_info(repo_path: &str, branch: &str) -> Option<PrInfo> {
     // Try to get PR info
-    let output = Command::new("gh")
-        .args([
+    let output = crate::process::output_with_timeout(
+        hidden_command("gh").args([
             "pr",
             "view",
             branch,
             "--json",
             "number,url,state,mergeable,statusCheckRollup",
         ])
-        .current_dir(repo_path)
-        .output()
-        .await;
+        .current_dir(repo_path),
+    )
+    .await;
 
     match output {
         Ok(output) if output.status.success() => {
@@ -1556,7 +1558,7 @@ pub async fn rebase_siblings(Json(request): Json<RebaseSiblingsRequest>) -> impl
     }
 
     // List all worktrees using git worktree list
-    let output = Command::new("git")
+    let output = hidden_command("git")
         .args(["worktree", "list", "--porcelain"])
         .current_dir(&request.repo_path)
         .output()
@@ -1603,7 +1605,7 @@ pub async fn rebase_siblings(Json(request): Json<RebaseSiblingsRequest>) -> impl
     let mut skipped = Vec::new();
 
     // Fetch latest from origin once (in main repo)
-    let fetch_output = Command::new("git")
+    let fetch_output = hidden_command("git")
         .args(["fetch", "origin"])
         .current_dir(&request.repo_path)
         .output()
@@ -1649,7 +1651,7 @@ pub async fn rebase_siblings(Json(request): Json<RebaseSiblingsRequest>) -> impl
 /// Rebase a single worktree onto origin/main.
 async fn rebase_single_worktree(worktree_path: &str, bead_id: &str) -> RebaseSiblingResult {
     // Fetch in the worktree to update refs
-    let fetch_result = Command::new("git")
+    let fetch_result = hidden_command("git")
         .args(["fetch", "origin"])
         .current_dir(worktree_path)
         .output()
@@ -1664,7 +1666,7 @@ async fn rebase_single_worktree(worktree_path: &str, bead_id: &str) -> RebaseSib
     }
 
     // Try to rebase onto origin/main
-    let rebase_output = Command::new("git")
+    let rebase_output = hidden_command("git")
         .args(["rebase", "origin/main"])
         .current_dir(worktree_path)
         .output()
@@ -1675,7 +1677,7 @@ async fn rebase_single_worktree(worktree_path: &str, bead_id: &str) -> RebaseSib
             // Rebase succeeded, force push with explicit branch name
             // (branch may not have upstream tracking configured)
             let branch_name = format!("bd-{}", bead_id);
-            let push_output = Command::new("git")
+            let push_output = hidden_command("git")
                 .args(["push", "origin", &branch_name, "--force-with-lease"])
                 .current_dir(worktree_path)
                 .output()
@@ -1707,7 +1709,7 @@ async fn rebase_single_worktree(worktree_path: &str, bead_id: &str) -> RebaseSib
             let stderr = String::from_utf8_lossy(&output.stderr);
 
             // Abort the rebase
-            let _ = Command::new("git")
+            let _ = hidden_command("git")
                 .args(["rebase", "--abort"])
                 .current_dir(worktree_path)
                 .output()

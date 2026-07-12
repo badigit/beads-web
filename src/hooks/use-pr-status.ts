@@ -11,8 +11,16 @@ import * as api from "@/lib/api";
 import { isDoltProject } from "@/lib/utils";
 import type { PRStatus } from "@/types";
 
-/** Default polling interval in milliseconds */
-const DEFAULT_POLLING_INTERVAL = 30_000;
+/**
+ * Default polling interval in milliseconds.
+ *
+ * Each tick shells out to git/gh network commands (remote check, ls-remote,
+ * gh rate_limit, gh pr view) which are costly over a VPN tunnel, so the
+ * interval is deliberately long (2 min) to keep background load low. The
+ * `gh api rate_limit` call is intentionally left in the backend status path;
+ * lowering the poll frequency is the primary throttle.
+ */
+const DEFAULT_POLLING_INTERVAL = 120_000;
 
 /**
  * Result type for the usePRStatus hook
@@ -33,7 +41,7 @@ export interface UsePRStatusResult {
  *
  * @param projectPath - Absolute path to the project git repository
  * @param beadId - Bead ID to check PR status for (null/undefined to disable)
- * @param pollingInterval - Polling interval in milliseconds (default: 30000)
+ * @param pollingInterval - Polling interval in milliseconds (default: 120000)
  * @returns Object containing status, loading state, error, and refresh function
  *
  * @example

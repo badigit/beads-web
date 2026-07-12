@@ -215,7 +215,7 @@ async fn get_dolt_process_entries() -> Result<Vec<ProcessEntry>, String> {
 /// Windows: Use `wmic` to find dolt.exe processes.
 #[cfg(windows)]
 async fn get_dolt_processes_windows() -> Result<Vec<ProcessEntry>, String> {
-    let output = tokio::process::Command::new("wmic")
+    let output = crate::process::hidden_command("wmic")
         .args([
             "process",
             "where",
@@ -271,7 +271,7 @@ async fn get_dolt_processes_windows() -> Result<Vec<ProcessEntry>, String> {
 /// Unix: Use `ps aux` to find dolt sql-server processes.
 #[cfg(not(windows))]
 async fn get_dolt_processes_unix() -> Result<Vec<ProcessEntry>, String> {
-    let output = tokio::process::Command::new("ps")
+    let output = crate::process::hidden_command("ps")
         .args(["aux"])
         .output()
         .await

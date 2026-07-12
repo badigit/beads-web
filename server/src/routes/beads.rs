@@ -18,7 +18,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::process::Command;
+use crate::process::hidden_command;
 
 use super::validate_path_security;
 use crate::db::{CachedCounts, Database};
@@ -259,7 +259,7 @@ async fn run_bd(args: &[&str], cwd: &Path) -> Result<String, String> {
 
     let result = tokio::time::timeout(
         Duration::from_secs(30),
-        Command::new(bd_path).args(args).current_dir(cwd).output(),
+        hidden_command(bd_path).args(args).current_dir(cwd).output(),
     )
     .await;
 
@@ -713,7 +713,7 @@ pub async fn create_bead_handler(
 
     let result = tokio::time::timeout(
         Duration::from_secs(30),
-        Command::new("bd").args(&args).current_dir(&project_path).output(),
+        hidden_command("bd").args(&args).current_dir(&project_path).output(),
     ).await;
 
     match result {
@@ -838,7 +838,7 @@ pub async fn update_bead_handler(
 
     let result = tokio::time::timeout(
         Duration::from_secs(30),
-        Command::new("bd").args(&args).current_dir(&project_path).output(),
+        hidden_command("bd").args(&args).current_dir(&project_path).output(),
     ).await;
 
     match result {
