@@ -11,6 +11,7 @@ import { SubtaskList, ChildPRStatus } from "@/components/subtask-list";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { usePRSettings } from "@/hooks/use-pr-settings";
 import { useTheme } from "@/hooks/use-theme";
 import * as api from "@/lib/api";
 import { formatBeadId, isBlocked, truncate } from "@/lib/bead-utils";
@@ -77,6 +78,9 @@ export function EpicCard({
   projectPath,
   onUpdate
 }: EpicCardProps) {
+  const { settings: prSettings } = usePRSettings();
+  const prEnabled = prSettings.enabled;
+
   const [isExpanded, setIsExpanded] = useState(false);
   const [isDesignPreviewExpanded, setIsDesignPreviewExpanded] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
@@ -95,7 +99,8 @@ export function EpicCard({
 
   // Fetch PR status for all children
   const fetchChildPRStatuses = useCallback(async () => {
-    if (!projectPath || isDoltProject(projectPath) || children.length === 0) return;
+    // Respect the PR integration flag: no network git/gh fan-out when disabled.
+    if (!prEnabled || !projectPath || isDoltProject(projectPath) || children.length === 0) return;
 
     const statusMap = new Map<string, ChildPRStatus>();
 
@@ -131,11 +136,18 @@ export function EpicCard({
     if (isMountedRef.current) {
       setChildPRStatuses(statusMap);
     }
-  }, [projectPath, children]);
+  }, [prEnabled, projectPath, children]);
 
   // Fetch PR statuses on mount and set up auto-refresh interval
   useEffect(() => {
     isMountedRef.current = true;
+
+    // Skip all polling when PR integration is disabled (default).
+    if (!prEnabled) {
+      return () => {
+        isMountedRef.current = false;
+      };
+    }
 
     // Initial fetch
     fetchChildPRStatuses();
@@ -149,7 +161,7 @@ export function EpicCard({
       isMountedRef.current = false;
       clearInterval(intervalId);
     };
-  }, [fetchChildPRStatuses]);
+  }, [prEnabled, fetchChildPRStatuses]);
 
   const progress = computeProgress(epic, allBeads);
   const progressPercentage = progress.total > 0

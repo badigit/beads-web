@@ -31,6 +31,7 @@ import { useBeadFilters } from "@/hooks/use-bead-filters";
 import { useBeads } from "@/hooks/use-beads";
 import { useGitHubStatus } from "@/hooks/use-github-status";
 import { useKeyboardNavigation } from "@/hooks/use-keyboard-navigation";
+import { usePRSettings } from "@/hooks/use-pr-settings";
 import { useProject } from "@/hooks/use-project";
 import { useTheme } from "@/hooks/use-theme";
 import { useWorktreeStatuses } from "@/hooks/use-worktree-statuses";
@@ -98,9 +99,14 @@ export default function KanbanBoard() {
   const isDoltOnly = isDolt && !project?.localPath;
   const fsPath = isDolt ? (project?.localPath ?? "") : (project?.path ?? "");
 
-  // GitHub status check
+  // PR / GitHub integration flag (default OFF). When disabled, no network
+  // git/gh polling (github status, worktree fan-out) is issued.
+  const { settings: prSettings } = usePRSettings();
+  const prEnabled = prSettings.enabled;
+
+  // GitHub status check (skipped entirely when PR integration is disabled)
   const { hasRemote, isAuthenticated, isLoading: githubStatusLoading } = useGitHubStatus(
-    fsPath || null
+    prEnabled ? fsPath || null : null
   );
 
   // Track whether the GitHub warning has been dismissed (session-only)
@@ -151,10 +157,12 @@ export default function KanbanBoard() {
   // Filter out closed beads to avoid unnecessary polling for finalized tasks
   const beadIds = useMemo(() => beads.filter(b => b.status !== 'closed').map(b => b.id), [beads]);
 
-  // Worktree statuses for PR workflow (skip for dolt-only projects)
+  // Worktree statuses for PR workflow (skip for dolt-only projects and when
+  // PR integration is disabled — no local/remote git fan-out in that case)
+  const worktreeEnabled = prEnabled && !isDoltOnly;
   const { statuses: worktreeStatuses } = useWorktreeStatuses(
-    isDoltOnly ? "" : fsPath,
-    isDoltOnly ? [] : beadIds
+    worktreeEnabled ? fsPath : "",
+    worktreeEnabled ? beadIds : []
   );
 
   /**

@@ -21,6 +21,7 @@ import { EditableField } from "@/components/editable-field";
 import { SubtaskList } from "@/components/subtask-list";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { usePRSettings } from "@/hooks/use-pr-settings";
 import { toast } from "@/hooks/use-toast";
 import * as api from "@/lib/api";
 import {
@@ -76,6 +77,8 @@ export function BeadDetail({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [open, onOpenChange]);
 
+  const { settings: prSettings } = usePRSettings();
+  const prEnabled = prSettings.enabled;
   const isReadOnly = !projectPath;
   const isDolt = projectPath ? isDoltProject(projectPath) : false;
 
@@ -151,7 +154,8 @@ export function BeadDetail({
   const [childPRStatuses, setChildPRStatuses] = useState<Map<string, { state: "open" | "merged" | "closed"; checks: { status: "success" | "failure" | "pending" } }>>(new Map());
 
   const fetchChildPRStatuses = useCallback(async () => {
-    if (!projectPath || isDoltProject(projectPath) || childTasks.length === 0) return;
+    // Respect the PR integration flag: no network git/gh fan-out when disabled.
+    if (!prEnabled || !projectPath || isDoltProject(projectPath) || childTasks.length === 0) return;
 
     const results = await Promise.all(
       childTasks.filter(c => c.status !== 'closed').map(async (child) => {
@@ -170,14 +174,14 @@ export function BeadDetail({
       if (result) statusMap.set(result.id, result.status);
     }
     setChildPRStatuses(statusMap);
-  }, [projectPath, childTasks]);
+  }, [prEnabled, projectPath, childTasks]);
 
   useEffect(() => {
-    if (!open || !isEpic || !projectPath || childTasks.length === 0) return;
+    if (!prEnabled || !open || !isEpic || !projectPath || childTasks.length === 0) return;
     fetchChildPRStatuses();
     const intervalId = setInterval(fetchChildPRStatuses, 30_000);
     return () => clearInterval(intervalId);
-  }, [open, isEpic, projectPath, childTasks, fetchChildPRStatuses]);
+  }, [prEnabled, open, isEpic, projectPath, childTasks, fetchChildPRStatuses]);
 
   const handleFullScreenChange = useCallback((isFullScreen: boolean) => {
     setIsDesignDocFullScreen(isFullScreen);

@@ -13,6 +13,14 @@ import type { MergeMethod } from "@/lib/api";
  * PR settings stored in localStorage
  */
 export interface PRSettings {
+  /**
+   * Whether PR / GitHub integration is enabled.
+   *
+   * Defaults to false: when disabled, the UI must not issue any network
+   * git/gh polling (ls-remote, gh api, gh pr view). Every network-polling
+   * call site is gated on this flag.
+   */
+  enabled: boolean;
   /** Polling interval in seconds (10-300) */
   pollingInterval: number;
   /** Default merge method for PRs */
@@ -27,6 +35,7 @@ export interface PRSettings {
  * Default PR settings values
  */
 const DEFAULT_SETTINGS: PRSettings = {
+  enabled: false,
   pollingInterval: 30,
   mergeMethod: "squash",
   showRateLimitWarnings: true,
@@ -74,9 +83,11 @@ function isValidMergeMethod(value: unknown): value is MergeMethod {
 }
 
 /**
- * Safely parse settings from localStorage
+ * Safely parse settings from localStorage.
+ *
+ * Exported for unit testing of validation/persistence behaviour.
  */
-function parseStoredSettings(stored: string | null): PRSettings {
+export function parseStoredSettings(stored: string | null): PRSettings {
   if (!stored) {
     return DEFAULT_SETTINGS;
   }
@@ -85,6 +96,10 @@ function parseStoredSettings(stored: string | null): PRSettings {
     const parsed = JSON.parse(stored);
 
     return {
+      enabled:
+        typeof parsed.enabled === "boolean"
+          ? parsed.enabled
+          : DEFAULT_SETTINGS.enabled,
       pollingInterval:
         typeof parsed.pollingInterval === "number"
           ? clampPollingInterval(parsed.pollingInterval)

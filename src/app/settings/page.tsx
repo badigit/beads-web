@@ -6,6 +6,7 @@ import { ColorPicker } from "@/components/color-picker";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   usePRSettings,
   MIN_POLLING_INTERVAL,
@@ -234,6 +235,27 @@ export default function SettingsPage() {
               <p className="text-sm text-t-tertiary">Loading settings...</p>
             ) : (
               <div className="space-y-6">
+                {/* Enable PR / GitHub integration */}
+                <label className="flex cursor-pointer items-start justify-between gap-4">
+                  <span>
+                    <span className="block text-sm font-medium text-t-secondary">
+                      Enable PR / GitHub integration
+                    </span>
+                    <span className="mt-1 block text-xs text-t-muted">
+                      When off (default), no PR status polling or git/gh network
+                      requests are made.
+                    </span>
+                  </span>
+                  <Switch
+                    checked={prSettings.enabled}
+                    onCheckedChange={(checked) => updateSetting("enabled", checked)}
+                    aria-label="Enable PR / GitHub integration"
+                  />
+                </label>
+
+                {/* Remaining PR settings are only relevant when enabled */}
+                {prSettings.enabled && (
+                  <>
                 {/* Polling Interval */}
                 <div>
                   <label
@@ -314,6 +336,8 @@ export default function SettingsPage() {
                     <span className="text-sm text-t-secondary">Auto-merge when checks pass</span>
                   </label>
                 </div>
+                  </>
+                )}
               </div>
             )}
           </div>

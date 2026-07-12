@@ -26,6 +26,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { usePRSettings } from "@/hooks/use-pr-settings";
 import { usePRStatus } from "@/hooks/use-pr-status";
 import { toast } from "@/hooks/use-toast";
 import * as api from "@/lib/api";
@@ -88,6 +89,8 @@ export function BeadPRSection({
   open,
   onCleanup,
 }: BeadPRSectionProps) {
+  const { settings: prSettings } = usePRSettings();
+  const prEnabled = prSettings.enabled;
   const hasWorktree = worktreeStatus?.exists ?? false;
 
   // Action loading states
@@ -109,7 +112,7 @@ export function BeadPRSection({
   // Guard to prevent duplicate auto-cleanup calls
   const autoCleanupTriggered = useRef(false);
 
-  const shouldFetchPRStatus = open && hasWorktree;
+  const shouldFetchPRStatus = prEnabled && open && hasWorktree;
 
   const {
     status: prStatus,
@@ -274,7 +277,8 @@ export function BeadPRSection({
     return () => { cancelled = true; };
   }, [projectPath, bead.id, prStatus?.pr?.state, prStatus?.pr?.number]);
 
-  if (!hasWorktree) return null;
+  // PR integration disabled (default) or no worktree — render nothing.
+  if (!prEnabled || !hasWorktree) return null;
 
   return (
     <div className="mt-6">

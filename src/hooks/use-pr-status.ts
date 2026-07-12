@@ -7,20 +7,10 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 
+import { usePRSettings } from "@/hooks/use-pr-settings";
 import * as api from "@/lib/api";
 import { isDoltProject } from "@/lib/utils";
 import type { PRStatus } from "@/types";
-
-/**
- * Default polling interval in milliseconds.
- *
- * Each tick shells out to git/gh network commands (remote check, ls-remote,
- * gh rate_limit, gh pr view) which are costly over a VPN tunnel, so the
- * interval is deliberately long (2 min) to keep background load low. The
- * `gh api rate_limit` call is intentionally left in the backend status path;
- * lowering the poll frequency is the primary throttle.
- */
-const DEFAULT_POLLING_INTERVAL = 120_000;
 
 /**
  * Result type for the usePRStatus hook
@@ -39,9 +29,13 @@ export interface UsePRStatusResult {
 /**
  * Hook to fetch and track PR status for a single bead
  *
+ * PR / GitHub integration must be enabled in settings (default OFF) for any
+ * network fetch to occur; when disabled the hook stays idle and returns a null
+ * status without issuing git/gh network calls. The polling interval is taken
+ * from user settings (`pollingInterval` seconds).
+ *
  * @param projectPath - Absolute path to the project git repository
  * @param beadId - Bead ID to check PR status for (null/undefined to disable)
- * @param pollingInterval - Polling interval in milliseconds (default: 120000)
  * @returns Object containing status, loading state, error, and refresh function
  *
  * @example
@@ -65,9 +59,12 @@ export interface UsePRStatusResult {
  */
 export function usePRStatus(
   projectPath: string,
-  beadId: string | null | undefined,
-  pollingInterval = DEFAULT_POLLING_INTERVAL
+  beadId: string | null | undefined
 ): UsePRStatusResult {
+  const { settings } = usePRSettings();
+  const prEnabled = settings.enabled;
+  const pollingInterval = settings.pollingInterval * 1000;
+
   const [status, setStatus] = useState<PRStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -82,7 +79,8 @@ export function usePRStatus(
    * Load PR status for the bead
    */
   const loadStatus = useCallback(async () => {
-    if (!projectPath || !beadId || isDoltProject(projectPath)) {
+    // Respect the integration flag: no network git/gh calls when disabled.
+    if (!prEnabled || !projectPath || !beadId || isDoltProject(projectPath)) {
       setStatus(null);
       setIsLoading(false);
       return;
@@ -105,7 +103,7 @@ export function usePRStatus(
     } finally {
       setIsLoading(false);
     }
-  }, [projectPath, beadId]);
+  }, [prEnabled, projectPath, beadId]);
 
   /**
    * Public refresh function for manual reload
@@ -125,16 +123,16 @@ export function usePRStatus(
     loadStatus();
   }, [loadStatus, beadId]);
 
-  // Set up periodic refresh (polling)
+  // Set up periodic refresh (polling) — skipped entirely when disabled
   useEffect(() => {
-    if (!projectPath || !beadId) return;
+    if (!prEnabled || !projectPath || !beadId) return;
 
     const intervalId = setInterval(() => {
       loadStatus();
     }, pollingInterval);
 
     return () => clearInterval(intervalId);
-  }, [projectPath, beadId, loadStatus, pollingInterval]);
+  }, [prEnabled, projectPath, beadId, loadStatus, pollingInterval]);
 
   return {
     status,
