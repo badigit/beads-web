@@ -92,3 +92,8 @@ beads-web-darwin-*
 # Beads / Dolt files (added by bd init)
 *.db
 .beads-credential-key
+
+# Local agent/harness configs & launchers (not part of product)
+.agents/
+.codex/
+start_dev.cmd
