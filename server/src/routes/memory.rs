@@ -242,7 +242,7 @@ pub async fn list_memory(Query(params): Query<MemoryParams>) -> impl IntoRespons
     };
 
     // Sort by ts descending (newest first)
-    entries.sort_by(|a, b| b.ts.cmp(&a.ts));
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.ts));
 
     let archived = count_entries(&apath);
     let stats = compute_stats(&entries, archived);

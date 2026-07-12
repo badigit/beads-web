@@ -6,7 +6,7 @@
 import { BeadsResponseSchema, PRStatusSchema, WorktreeStatusSchema } from '@/lib/api-schemas';
 import type { Project, Tag, Bead, WorktreeStatus, WorktreeEntry, PRStatus, PRFilesResponse, MemoryResponse, MemoryStats, MemoryEntry, Agent, AgentModel } from '@/types';
 
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3008';
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
 
 /**
  * Input for creating a new project
@@ -80,7 +80,7 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(`API error: ${res.status} ${detail}`);
   }
   // Handle 204 No Content (archive/unarchive/delete endpoints)
-  if (res.status === 204 || res.headers.get('content-length') === '0') {
+  if (res.status === 204 || res.headers?.get?.('content-length') === '0') {
     return undefined as T;
   }
   return res.json();
@@ -413,6 +413,7 @@ export interface DoltStatus {
 export interface DoltDatabase {
   name: string;
   project_name: string;
+  local_path?: string;
 }
 
 /**

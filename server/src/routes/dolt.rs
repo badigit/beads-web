@@ -2,7 +2,7 @@
 
 use axum::{extract::Extension, response::IntoResponse, Json};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::db::Database;
@@ -35,6 +35,7 @@ pub async fn dolt_status(
 /// Lists all beads databases discovered via SHOW DATABASES.
 pub async fn dolt_databases(
     Extension(dolt): Extension<Arc<DoltManager>>,
+    Extension(db): Extension<Arc<Database>>,
 ) -> impl IntoResponse {
     if !dolt.is_available() && !dolt.check_server().await {
         return Json(serde_json::json!({
@@ -44,7 +45,27 @@ pub async fn dolt_databases(
     }
 
     match dolt.discover_databases().await {
-        Ok(databases) => Json(serde_json::json!({ "databases": databases })),
+        Ok(mut databases) => {
+            let projects = db.get_projects_filtered(true).unwrap_or_default();
+            for database in &mut databases {
+                if let Some(project) = projects.iter().find(|project| {
+                    let configured_database = if let Some(name) = project.path.strip_prefix("dolt://") {
+                        Some(name.to_string())
+                    } else {
+                        dolt::database_name_for_project(std::path::Path::new(&project.path))
+                    };
+                    configured_database.as_deref() == Some(database.name.as_str())
+                }) {
+                    database.project_name = project.name.clone();
+                    database.local_path = if project.path.starts_with("dolt://") {
+                        project.local_path.clone()
+                    } else {
+                        Some(project.path.clone())
+                    };
+                }
+            }
+            Json(serde_json::json!({ "databases": databases }))
+        }
         Err(e) => Json(serde_json::json!({
             "error": e.to_string(),
             "databases": [],
@@ -307,10 +328,8 @@ fn parse_data_dir_from_cmdline(cmdline: &str) -> Option<PathBuf> {
     for (i, part) in parts.iter().enumerate() {
         let data_dir = if (*part == "--data-dir") && i + 1 < parts.len() {
             Some(parts[i + 1])
-        } else if let Some(val) = part.strip_prefix("--data-dir=") {
-            Some(val)
         } else {
-            None
+            part.strip_prefix("--data-dir=")
         };
 
         if let Some(dir) = data_dir {
@@ -328,7 +347,7 @@ fn parse_data_dir_from_cmdline(cmdline: &str) -> Option<PathBuf> {
 }
 
 /// Strips `.beads/dolt/` or `.beads/dolt` suffix from a path to get the project root.
-fn strip_beads_dolt_suffix(path: &PathBuf) -> Option<PathBuf> {
+fn strip_beads_dolt_suffix(path: &Path) -> Option<PathBuf> {
     let path_str = path.to_string_lossy();
     // Normalize separators for matching
     let normalized = path_str.replace('\\', "/");

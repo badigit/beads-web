@@ -111,9 +111,12 @@ async fn main() {
     // Initialize Dolt connection manager
     let dolt_manager = Arc::new(dolt::DoltManager::new());
     if dolt_manager.check_server().await {
-        info!("Dolt server is available on port 3307");
+        info!("Dolt server is available at {}", dolt_manager.endpoint());
     } else {
-        info!("Dolt server not detected — will use bd CLI / JSONL fallback");
+        info!(
+            "Dolt server not detected at {} — will use bd CLI / JSONL fallback",
+            dolt_manager.endpoint()
+        );
     }
 
     // Check for bd CLI availability and compatibility

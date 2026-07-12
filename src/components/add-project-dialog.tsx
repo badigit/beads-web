@@ -186,6 +186,7 @@ export function AddProjectDialog({
       await onAddProject({
         name: db.project_name,
         path: `dolt://${db.name}`,
+        localPath: db.local_path,
       });
       toast({
         title: "Project added",

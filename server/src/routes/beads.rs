@@ -356,30 +356,40 @@ fn upsert_counts_cache(
 /// Calls `bd list --json` for issues and `bd sql` for comments,
 /// then merges them together.
 async fn read_beads_from_cli(project_path: &Path, updated_after: Option<&str>) -> Result<Vec<Bead>, String> {
-    // Get beads, optionally filtered by updated_after
-    let list_output = if let Some(since) = updated_after {
-        let updated_flag = format!("--updated-after={}", since);
-        let args = vec!["list", "--json", "--all", &updated_flag];
-        match run_bd(&args, project_path).await {
-            Ok(output) => output,
-            Err(e) => {
-                tracing::warn!("bd list --updated-after failed ({}), falling back to full list", e);
-                run_bd(&["list", "--json", "--all"], project_path).await?
-            }
-        }
+    let updated_flag = updated_after.map(|since| format!("--updated-after={}", since));
+    let comments_args = [
+        "sql",
+        "SELECT * FROM comments ORDER BY issue_id, id",
+        "--json",
+    ];
+
+    let (list_result, comments_result) = if let Some(ref flag) = updated_flag {
+        let list_args = ["list", "--json", "--all", flag.as_str()];
+        tokio::join!(
+            run_bd(&list_args, project_path),
+            run_bd(&comments_args, project_path),
+        )
     } else {
-        run_bd(&["list", "--json", "--all"], project_path).await?
+        tokio::join!(
+            run_bd(&["list", "--json", "--all"], project_path),
+            run_bd(&comments_args, project_path),
+        )
+    };
+
+    let list_output = match list_result {
+        Ok(output) => output,
+        Err(e) if updated_after.is_some() => {
+            tracing::warn!("bd list --updated-after failed ({}), falling back to full list", e);
+            run_bd(&["list", "--json", "--all"], project_path).await?
+        }
+        Err(e) => return Err(e),
     };
     let json_str = extract_json_array(&list_output)?;
     let mut beads: Vec<Bead> = serde_json::from_str(json_str)
         .map_err(|e| format!("Failed to parse bd list output: {}", e))?;
 
-    // Get all comments
-    let comments_output = run_bd(
-        &["sql", "SELECT * FROM comments ORDER BY issue_id, id", "--json"],
-        project_path,
-    )
-    .await;
+    // Get all comments (already requested in parallel with list above)
+    let comments_output = comments_result;
 
     if let Ok(output) = comments_output {
         let json_str = extract_json_array(&output).unwrap_or("[]");
@@ -643,9 +653,17 @@ pub async fn create_bead_handler(
             );
         }
 
-        // Generate a unique ID: prefix-shortid
-        let prefix = db_name.strip_prefix("beads_").unwrap_or(db_name);
-        let short_id = &Utc::now().timestamp_millis().to_string()[6..];
+        // Use the issue prefix configured by `bd init`, not the database name.
+        let prefix = match dolt_manager.issue_prefix(db_name).await {
+            Ok(prefix) => prefix,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": e.to_string() })),
+                );
+            }
+        };
+        let short_id = &uuid::Uuid::new_v4().simple().to_string()[..6];
         let bead_id = format!("{}-{}", prefix, short_id);
 
         match dolt_manager.create_bead(
@@ -1015,7 +1033,7 @@ pub fn recompute_epic_statuses(issues_path: &Path) -> Result<Vec<String>, String
                 // but keep them in raw_lines for lossless write-back.
                 if value
                     .as_object()
-                    .map_or(false, |o| o.contains_key("_type"))
+                    .is_some_and(|o| o.contains_key("_type"))
                 {
                     raw_lines.push(value);
                     continue;
