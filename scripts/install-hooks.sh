@@ -4,7 +4,7 @@
 #
 # Called by `npm run prepare` (runs on `npm install`).
 # The generated hook runs:
-#   1. Beads sync (flush pending changes)
+#   1. Beads sync (flush pending changes) — skipped in Dolt server mode
 #   2. ESLint + tsc --noEmit on staged .ts/.tsx/.js/.jsx files
 #   3. cargo clippy on staged server/**/*.rs or server/Cargo.toml
 #
@@ -45,6 +45,9 @@ cat > "$HOOK_PATH" << 'HOOK_EOF'
 
 # ── Beads sync ─────────────────────────────────────────────────────────
 # Flush pending bd changes to .beads/issues.jsonl before commit.
+# Skipped in Dolt server mode: the central Dolt server is the source of
+# truth there, so a local issues.jsonl only triggers redundant auto-imports
+# on every subsequent bd call (and git add is a no-op — it's gitignored).
 
 if command -v bd >/dev/null 2>&1; then
   BEADS_DIR=""
@@ -61,7 +64,15 @@ if command -v bd >/dev/null 2>&1; then
     fi
   fi
 
-  if [ -n "$BEADS_DIR" ]; then
+  # Detect Dolt server mode from metadata.json — skip the JSONL flush if so.
+  BEADS_SERVER_MODE=0
+  if [ -n "$BEADS_DIR" ] && [ -f "$BEADS_DIR/metadata.json" ]; then
+    if grep -q '"dolt_mode"[[:space:]]*:[[:space:]]*"server"' "$BEADS_DIR/metadata.json" 2>/dev/null; then
+      BEADS_SERVER_MODE=1
+    fi
+  fi
+
+  if [ -n "$BEADS_DIR" ] && [ "$BEADS_SERVER_MODE" -eq 0 ]; then
     if ! bd export -o "$BEADS_DIR/issues.jsonl" >/dev/null 2>&1; then
       echo "Error: Failed to flush bd changes to JSONL" >&2
       echo "Run 'bd export -o .beads/issues.jsonl' manually to diagnose" >&2
