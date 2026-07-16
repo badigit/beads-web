@@ -4,15 +4,17 @@ import { useMemo, useState } from "react";
 
 
 
-import { Plus, Github, Search, X, Archive } from "lucide-react";
+import { Plus, Github, Search, X, Archive, LayoutGrid, List } from "lucide-react";
 
 import { AddProjectDialog } from "@/components/add-project-dialog";
 import { ProjectCard } from "@/components/project-card";
+import { ProjectRow } from "@/components/project-row";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProjects } from "@/hooks/use-projects";
+import { useProjectsView } from "@/hooks/use-projects-view";
 import { useToast } from "@/hooks/use-toast";
 
 export default function ProjectsPage() {
@@ -20,7 +22,14 @@ export default function ProjectsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const { projects, isLoading, loadingStatus, error, showArchived, addProject, updateProjectTags, refetch, archiveProject, unarchiveProject, deleteProject, toggleShowArchived } = useProjects();
+  const { view, setView } = useProjectsView();
   const { toast } = useToast();
+
+  const isListView = view === "list";
+  const collectionClass = isListView
+    ? "flex flex-col gap-2"
+    : "grid gap-4 sm:grid-cols-2 lg:grid-cols-3";
+  const ProjectItem = isListView ? ProjectRow : ProjectCard;
 
   // Get all unique tags across projects
   const allTags = useMemo(() => {
@@ -105,8 +114,36 @@ export default function ProjectsPage() {
         </p>
 
         <div className="w-full max-w-[1200px]">
-          {/* Add Project Dropdown */}
-          <div className="mb-6 flex justify-end">
+          {/* View toggle + Add Project */}
+          <div className="mb-6 flex justify-end gap-3">
+            {projects.length > 0 && (
+              <div
+                className="flex items-center gap-0.5 rounded-md border border-b-strong bg-surface-raised/50 p-0.5"
+                role="group"
+                aria-label="Project view"
+              >
+                <Button
+                  variant={view === "cards" ? "mono" : "ghost"}
+                  size="sm"
+                  mode="icon"
+                  aria-label="Card view"
+                  aria-pressed={view === "cards"}
+                  onClick={() => setView("cards")}
+                >
+                  <LayoutGrid className="h-4 w-4" aria-hidden="true" />
+                </Button>
+                <Button
+                  variant={view === "list" ? "mono" : "ghost"}
+                  size="sm"
+                  mode="icon"
+                  aria-label="List view"
+                  aria-pressed={view === "list"}
+                  onClick={() => setView("list")}
+                >
+                  <List className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </div>
+            )}
             <Button variant="mono" size="md" onClick={() => setIsAddDialogOpen(true)}>
               <Plus aria-hidden="true" />
               Add Project
@@ -198,19 +235,31 @@ export default function ProjectsPage() {
           )}
 
           {isLoading ? (
-            <div role="status" aria-label="Loading projects" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="rounded-xl border border-b-default bg-surface-raised/70 p-4">
-                  <div className="mb-3 flex gap-1.5">
-                    <Skeleton className="h-5 w-16" />
-                    <Skeleton className="h-5 w-12" />
-                  </div>
-                  <Skeleton className="h-5 w-40" />
-                  <Skeleton className="mt-2 h-4 w-48" />
-                  <Skeleton className="mt-4 h-4 w-32" />
-                  <Skeleton className="mt-2 h-3 w-28" />
-                </div>
-              ))}
+            <div role="status" aria-label="Loading projects" className={collectionClass}>
+              {isListView
+                ? [1, 2, 3].map((i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-3 rounded-lg border border-b-default bg-surface-raised/70 px-3 py-2.5"
+                    >
+                      <Skeleton className="h-7 w-7 rounded-full" />
+                      <Skeleton className="h-4 w-40" />
+                      <Skeleton className="h-3 w-24" />
+                      <Skeleton className="ml-auto h-4 w-32" />
+                    </div>
+                  ))
+                : [1, 2, 3].map((i) => (
+                    <div key={i} className="rounded-xl border border-b-default bg-surface-raised/70 p-4">
+                      <div className="mb-3 flex gap-1.5">
+                        <Skeleton className="h-5 w-16" />
+                        <Skeleton className="h-5 w-12" />
+                      </div>
+                      <Skeleton className="h-5 w-40" />
+                      <Skeleton className="mt-2 h-4 w-48" />
+                      <Skeleton className="mt-4 h-4 w-32" />
+                      <Skeleton className="mt-2 h-3 w-28" />
+                    </div>
+                  ))}
             </div>
           ) : error ? (
             <div role="alert" className="rounded-lg border border-danger/50 bg-danger/70 p-6 text-center">
@@ -220,25 +269,23 @@ export default function ProjectsPage() {
               </p>
             </div>
           ) : filteredProjects.length === 0 ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="rounded-lg border border-dashed border-b-strong bg-surface-raised/70 p-6 text-center text-t-tertiary">
-                {hasActiveFilters ? (
-                  <>
-                    <p>No matching projects</p>
-                    <p className="mt-1 text-sm text-t-muted">Try adjusting your search or filters</p>
-                  </>
-                ) : (
-                  <>
-                    <p>No projects yet</p>
-                    <p className="mt-1 text-sm text-t-muted">Click the Add Project button above to get started</p>
-                  </>
-                )}
-              </div>
+            <div className="rounded-lg border border-dashed border-b-strong bg-surface-raised/70 p-6 text-center text-t-tertiary">
+              {hasActiveFilters ? (
+                <>
+                  <p>No matching projects</p>
+                  <p className="mt-1 text-sm text-t-muted">Try adjusting your search or filters</p>
+                </>
+              ) : (
+                <>
+                  <p>No projects yet</p>
+                  <p className="mt-1 text-sm text-t-muted">Click the Add Project button above to get started</p>
+                </>
+              )}
             </div>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className={collectionClass}>
               {filteredProjects.map((project) => (
-                <ProjectCard
+                <ProjectItem
                   key={project.id}
                   id={project.id}
                   name={project.name}
