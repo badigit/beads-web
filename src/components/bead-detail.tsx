@@ -32,6 +32,7 @@ import {
   getStatusDotColor,
 } from "@/lib/bead-utils";
 import { updateTitle, updateDescription, updateStatus as cliUpdateStatus } from "@/lib/cli";
+import { isDesignDocPath } from "@/lib/design-doc";
 import { cn, isDoltProject } from "@/lib/utils";
 import type { Bead, WorktreeStatus } from "@/types";
 
@@ -129,7 +130,7 @@ export function BeadDetail({
 
   const [isDesignDocFullScreen, setIsDesignDocFullScreen] = useState(false);
   const [isAddSubtaskOpen, setIsAddSubtaskOpen] = useState(false);
-  const hasDesignDoc = !!bead.design_doc;
+  const hasDesignDoc = isDesignDocPath(bead.design_doc);
   const hasWorktree = worktreeStatus?.exists ?? false;
   const isEpic = bead.children && bead.children.length > 0;
 

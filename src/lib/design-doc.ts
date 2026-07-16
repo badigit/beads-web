@@ -6,6 +6,20 @@
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
 
 /**
+ * Determine whether a bd `design` field value is a design-doc file path
+ * (`.designs/….md`) rather than free-text content.
+ *
+ * This is the single source of truth for deciding whether the Design Preview
+ * block should render / fetch. Free-text or empty values return false so the UI
+ * never sends them to /api/fs/read (which would 403 on non-`.designs/` paths).
+ */
+export function isDesignDocPath(value?: string): boolean {
+  if (!value) return false;
+  const trimmed = value.trim();
+  return trimmed.startsWith('.designs/') && trimmed.endsWith('.md');
+}
+
+/**
  * Fetch design doc content from the backend API
  */
 export async function fetchDesignDoc(path: string, projectPath: string): Promise<string> {
