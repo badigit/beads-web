@@ -16,6 +16,7 @@ import { useTheme } from "@/hooks/use-theme";
 import * as api from "@/lib/api";
 import { formatBeadId, isBlocked, truncate } from "@/lib/bead-utils";
 import { closeBead } from "@/lib/cli";
+import { isDesignDocPath } from "@/lib/design-doc";
 import { computeEpicProgress } from "@/lib/epic-parser";
 import { cn, isDoltProject } from "@/lib/utils";
 import type { Bead, Epic, EpicProgress } from "@/types";
@@ -169,7 +170,7 @@ export function EpicCard({
     : 0;
 
   const commentCount = (epic.comments ?? []).length;
-  const hasDesignDoc = !!epic.design_doc;
+  const hasDesignDoc = isDesignDocPath(epic.design_doc);
 
   // Show Close Epic button when all children are complete and epic is in review
   const canCloseEpic = progressPercentage === 100 && epic.status === 'inreview';
