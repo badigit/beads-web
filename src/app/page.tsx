@@ -366,6 +366,16 @@ export default function ProjectsPage() {
             <Github className="h-4 w-4" aria-hidden="true" />
             <span>Beads CLI</span>
           </a>
+          <span className="text-t-faint" aria-hidden="true">·</span>
+          <a
+            href="https://github.com/weselow/claude-protocol"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 text-sm text-t-muted transition-colors hover:text-t-secondary"
+          >
+            <Github className="h-4 w-4" aria-hidden="true" />
+            <span>Beads Orchestration Skill</span>
+          </a>
         </div>
       </footer>
 
