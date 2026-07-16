@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 
 
 
-import { Plus, Github, Search, X, Archive, LayoutGrid, List } from "lucide-react";
+import { Plus, Github, Search, X, Archive, LayoutGrid, List, ArrowDownAZ, Clock } from "lucide-react";
 
 import { AddProjectDialog } from "@/components/add-project-dialog";
 import { ProjectCard } from "@/components/project-card";
@@ -14,8 +14,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProjects } from "@/hooks/use-projects";
+import { useProjectsSort } from "@/hooks/use-projects-sort";
 import { useProjectsView } from "@/hooks/use-projects-view";
 import { useToast } from "@/hooks/use-toast";
+import { sortProjects } from "@/lib/sort-projects";
 
 export default function ProjectsPage() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
@@ -23,6 +25,7 @@ export default function ProjectsPage() {
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const { projects, isLoading, loadingStatus, error, showArchived, addProject, updateProjectTags, refetch, archiveProject, unarchiveProject, deleteProject, toggleShowArchived } = useProjects();
   const { view, setView } = useProjectsView();
+  const { sort, setSort } = useProjectsSort();
   const { toast } = useToast();
 
   const isListView = view === "list";
@@ -63,6 +66,14 @@ export default function ProjectsPage() {
     });
   }, [projects, searchQuery, selectedTagIds]);
 
+  // Order the (already filtered) projects by the persisted sort mode.
+  // Applied on top of filtering so both the list and card views — and
+  // archived projects — render in the chosen order.
+  const sortedProjects = useMemo(
+    () => sortProjects(filteredProjects, sort),
+    [filteredProjects, sort]
+  );
+
   const toggleTag = (tagId: string) => {
     setSelectedTagIds((prev) =>
       prev.includes(tagId)
@@ -95,27 +106,38 @@ export default function ProjectsPage() {
 
   return (
     <div className="flex min-h-dvh flex-col bg-surface-base">
-      {/* Hero Section - pushed down with padding */}
-      <main className="flex flex-col items-center px-6 pt-32">
-        {/* Centered Heading with Space Grotesk */}
-        <h1 className="mb-4 text-center text-balance font-heading text-4xl font-bold tracking-tight text-t-primary sm:text-5xl">
-          Manage Your Beads Projects
-        </h1>
-        <p className="text-center text-t-tertiary text-sm mb-8">
-          Highly recommended to use with the{" "}
-          <a
-            href="https://github.com/weselow/claude-protocol"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-info hover:text-info underline"
-          >
-            Beads Orchestration Skill
-          </a>
-        </p>
-
+      <main className="flex flex-col items-center px-6 pt-10">
         <div className="w-full max-w-[1200px]">
-          {/* View toggle + Add Project */}
+          {/* Sort toggle + View toggle + Add Project */}
           <div className="mb-6 flex justify-end gap-3">
+            {projects.length > 0 && (
+              <div
+                className="flex items-center gap-0.5 rounded-md border border-b-strong bg-surface-raised/50 p-0.5"
+                role="group"
+                aria-label="Project sort"
+              >
+                <Button
+                  variant={sort === "alpha" ? "mono" : "ghost"}
+                  size="sm"
+                  mode="icon"
+                  aria-label="Sort alphabetically"
+                  aria-pressed={sort === "alpha"}
+                  onClick={() => setSort("alpha")}
+                >
+                  <ArrowDownAZ className="h-4 w-4" aria-hidden="true" />
+                </Button>
+                <Button
+                  variant={sort === "activity" ? "mono" : "ghost"}
+                  size="sm"
+                  mode="icon"
+                  aria-label="Sort by recent activity"
+                  aria-pressed={sort === "activity"}
+                  onClick={() => setSort("activity")}
+                >
+                  <Clock className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </div>
+            )}
             {projects.length > 0 && (
               <div
                 className="flex items-center gap-0.5 rounded-md border border-b-strong bg-surface-raised/50 p-0.5"
@@ -284,7 +306,7 @@ export default function ProjectsPage() {
             </div>
           ) : (
             <div className={collectionClass}>
-              {filteredProjects.map((project) => (
+              {sortedProjects.map((project) => (
                 <ProjectItem
                   key={project.id}
                   id={project.id}

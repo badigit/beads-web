@@ -15,7 +15,7 @@ import { useState, useEffect, useCallback } from "react";
 export type ProjectsView = "cards" | "list";
 
 /** Default view when nothing is stored. */
-export const DEFAULT_PROJECTS_VIEW: ProjectsView = "cards";
+export const DEFAULT_PROJECTS_VIEW: ProjectsView = "list";
 
 /** localStorage key for the persisted view mode. */
 export const PROJECTS_VIEW_STORAGE_KEY = "beads-web:projects-view";
@@ -23,10 +23,15 @@ export const PROJECTS_VIEW_STORAGE_KEY = "beads-web:projects-view";
 /**
  * Safely coerce a raw stored value into a valid `ProjectsView`.
  *
+ * Honours an explicitly stored `"cards"` (a prior user choice) even though
+ * the default is now `"list"`; only a missing or unrecognised value falls
+ * back to the default.
+ *
  * Exported for unit testing of the persistence/validation behaviour.
  */
 export function parseStoredView(stored: string | null): ProjectsView {
-  return stored === "list" ? "list" : DEFAULT_PROJECTS_VIEW;
+  if (stored === "cards" || stored === "list") return stored;
+  return DEFAULT_PROJECTS_VIEW;
 }
 
 /** Result type for the `useProjectsView` hook. */
