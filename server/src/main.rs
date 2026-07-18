@@ -159,6 +159,8 @@ async fn main() {
         .route("/api/beads", get(routes::beads::read_beads))
         .route("/api/beads/create", post(routes::beads::create_bead_handler))
         .route("/api/beads/update", patch(routes::beads::update_bead_handler))
+        // Global cross-project search
+        .route("/api/search", get(routes::search::global_search))
         // Dolt endpoints
         .route("/api/dolt/status", get(routes::dolt::dolt_status))
         .route("/api/dolt/databases", get(routes::dolt::dolt_databases))
