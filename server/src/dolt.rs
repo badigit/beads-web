@@ -393,6 +393,66 @@ impl DoltManager {
         info!("Updated bead {} in Dolt (db: {})", id, db_name);
         Ok(())
     }
+
+    /// Runs a case-insensitive substring search over `id` and `title` in one
+    /// database, used by the global cross-project search endpoint.
+    ///
+    /// `pattern` must be a ready-to-use lowercase `LIKE` pattern with wildcards
+    /// already escaped by the caller (see `routes::search::escape_like`).
+    pub async fn search_issues(
+        &self,
+        db_name: &str,
+        pattern: &str,
+        limit: u32,
+    ) -> Result<Vec<SearchRow>, DoltError> {
+        validate_discovered_database_name(db_name)?;
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+
+        let query = format!(
+            "SELECT id, title, status FROM `{}`.issues \
+             WHERE LOWER(id) LIKE :pattern OR LOWER(title) LIKE :pattern \
+             LIMIT {}",
+            db_name, limit
+        );
+        let rows: Vec<Row> = conn
+            .exec(&query, mysql_async::params! { "pattern" => pattern })
+            .await
+            .map_err(|e| DoltError::QueryFailed(format!("search: {}", e)))?;
+
+        Ok(rows
+            .iter()
+            .map(|row| SearchRow {
+                id: get_str(row, "id"),
+                title: get_str(row, "title"),
+                status: get_opt_str(row, "status").unwrap_or_else(|| "open".to_string()),
+            })
+            .collect())
+    }
+}
+
+/// A single issue row matched by the global search query.
+#[derive(Debug, Clone)]
+pub struct SearchRow {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+}
+
+/// Like [`validate_database_name`], but also accepts `-`, which occurs in
+/// discovered database names such as `beads_ai-photo-factory`.
+fn validate_discovered_database_name(db_name: &str) -> Result<(), DoltError> {
+    if db_name.is_empty()
+        || !db_name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return Err(DoltError::DatabaseNotFound(db_name.to_string()));
+    }
+    Ok(())
 }
 
 fn validate_database_name(db_name: &str) -> Result<(), DoltError> {
@@ -888,5 +948,18 @@ mod tests {
         assert!(validate_database_name("_my_llm_skills_agents").is_ok());
         assert!(validate_database_name("tvp`; DROP DATABASE tvp; --").is_err());
         assert!(validate_database_name("").is_err());
+    }
+
+    #[test]
+    fn test_discovered_database_name_allows_hyphen() {
+        assert!(validate_discovered_database_name("beads_ai-photo-factory").is_ok());
+        assert!(validate_discovered_database_name("tvp").is_ok());
+    }
+
+    #[test]
+    fn test_discovered_database_name_rejects_injection() {
+        assert!(validate_discovered_database_name("tvp`; DROP DATABASE tvp; --").is_err());
+        assert!(validate_discovered_database_name("a b").is_err());
+        assert!(validate_discovered_database_name("").is_err());
     }
 }
