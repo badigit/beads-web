@@ -107,24 +107,58 @@ pub struct BeadsParams {
     pub updated_after: Option<String>,
 }
 
-/// A dependency relationship in the JSONL file (old format).
+/// Relation type assumed when a dependency object carries no explicit type.
+const DEFAULT_DEP_TYPE: &str = "blocks";
+
+/// A normalized dependency edge: the target issue id plus the relation type.
 ///
-/// Old `bd` versions stored dependencies as:
-/// ```json
-/// "dependencies": [{"depends_on_id":"parent-1", "type":"parent-child"}]
-/// ```
-#[derive(Debug, Deserialize, Clone)]
-pub(crate) struct LegacyDependency {
+/// `bd` has emitted two different object shapes for `dependencies`; both are
+/// normalized into this struct so downstream code has a single representation:
+///
+/// - **legacy** (`bd` ≤ 1.0.x, Dolt schema ≤ v32):
+///   ```json
+///   {"issue_id":"a", "depends_on_id":"parent-1", "type":"parent-child"}
+///   ```
+/// - **modern** (`bd` ≥ 1.1.0, Dolt schema v53): the full target issue object,
+///   where `id` is the target and the relation lives in `dependency_type`:
+///   ```json
+///   {"id":"parent-1", "title":"…", "status":"open", "dependency_type":"parent-child"}
+///   ```
+#[derive(Debug, Clone)]
+pub(crate) struct DependencyEdge {
     depends_on_id: String,
-    #[serde(rename = "type")]
     dep_type: String,
+}
+
+impl DependencyEdge {
+    /// Normalizes one dependency entry, returning `None` if no target id is present.
+    ///
+    /// `depends_on_id`/`type` (legacy) take precedence over `id`/`dependency_type`
+    /// (modern), so a legacy object is never misread even if it also carries an `id`.
+    fn from_json(value: &serde_json::Value) -> Option<Self> {
+        let obj = value.as_object()?;
+        let field = |primary: &str, fallback: &str| {
+            obj.get(primary)
+                .or_else(|| obj.get(fallback))
+                .and_then(|v| v.as_str())
+        };
+
+        let depends_on_id = field("depends_on_id", "id")?;
+        let dep_type = field("type", "dependency_type").unwrap_or(DEFAULT_DEP_TYPE);
+
+        Some(Self {
+            depends_on_id: depends_on_id.to_string(),
+            dep_type: dep_type.to_string(),
+        })
+    }
 }
 
 /// A single bead/issue from the JSONL file.
 ///
-/// Supports both old and new `bd` CLI formats:
-/// - **Old**: `dependencies` as array of objects with `depends_on_id` and `type`
-/// - **New**: `parent` (string), `dependencies` as array of string IDs, `related` as array of strings
+/// Supports every `bd` CLI format seen so far:
+/// - **bd ≤ 1.0.x**: `dependencies` as array of `{depends_on_id, type}` objects
+/// - **bd 1.1.0**: `dependencies` as array of full issue objects carrying `dependency_type`
+/// - **variant**: `parent` (string), `dependencies` as array of string IDs, `related` as array of strings
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Bead {
     pub id: String,
@@ -160,21 +194,26 @@ pub struct Bead {
     pub deps: Option<Vec<String>>,
     #[serde(default, alias = "related")]
     pub relates_to: Option<Vec<String>>,
-    /// Raw dependencies field — accepts both old (array of objects) and new (array of strings) formats.
+    /// Raw dependencies field — accepts arrays of objects (legacy or bd 1.1.0) and arrays of string IDs.
     #[serde(default, skip_serializing, deserialize_with = "deserialize_dependencies")]
     pub(crate) dependencies: Option<RawDependencies>,
 }
 
-/// Parsed dependencies in either old or new format.
+/// Parsed dependencies in any of the formats `bd` has emitted.
 #[derive(Debug, Clone)]
 pub(crate) enum RawDependencies {
-    /// Old format: array of `{depends_on_id, type}` objects
-    Legacy(Vec<LegacyDependency>),
-    /// New format: flat array of string IDs (blocking deps)
+    /// Array of objects — legacy `{depends_on_id, type}` or modern
+    /// `{id, …, dependency_type}`, both normalized to [`DependencyEdge`].
+    Objects(Vec<DependencyEdge>),
+    /// Flat array of string IDs (blocking deps)
     StringIds(Vec<String>),
 }
 
-/// Custom deserializer that handles both old and new dependency formats.
+/// Custom deserializer handling every `dependencies` format `bd` has emitted.
+///
+/// The format is detected from the first element (string vs object). Entries
+/// that cannot be understood are skipped with a warning rather than failing —
+/// an unparseable dependency must never discard the entire bead.
 fn deserialize_dependencies<'de, D>(deserializer: D) -> Result<Option<RawDependencies>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -190,18 +229,32 @@ where
         return Ok(None);
     }
 
-    // Check first element to distinguish formats
+    // Detect format from the first element
     if arr[0].is_string() {
-        // New format: ["id1", "id2"]
-        let ids: Vec<String> = serde_json::from_value(serde_json::Value::Array(arr))
-            .map_err(serde::de::Error::custom)?;
-        Ok(Some(RawDependencies::StringIds(ids)))
-    } else {
-        // Old format: [{depends_on_id, type}, ...]
-        let deps: Vec<LegacyDependency> = serde_json::from_value(serde_json::Value::Array(arr))
-            .map_err(serde::de::Error::custom)?;
-        Ok(Some(RawDependencies::Legacy(deps)))
+        let ids: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+        if ids.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(RawDependencies::StringIds(ids)));
     }
+
+    let mut edges = Vec::with_capacity(arr.len());
+    for entry in &arr {
+        match DependencyEdge::from_json(entry) {
+            Some(edge) => edges.push(edge),
+            None => tracing::warn!(
+                "Skipping dependency entry with no recognizable target id: {}",
+                entry
+            ),
+        }
+    }
+    if edges.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(RawDependencies::Objects(edges)))
 }
 
 fn deserialize_comment_id<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -870,10 +923,10 @@ fn post_process_beads(mut beads: Vec<Bead>) -> Vec<Bead> {
     for bead in &mut beads {
         if let Some(raw_deps) = bead.dependencies.take() {
             match raw_deps {
-                RawDependencies::Legacy(legacy_deps) => {
+                RawDependencies::Objects(edges) => {
                     let mut blocking = Vec::new();
                     let mut related = Vec::new();
-                    for dep in &legacy_deps {
+                    for dep in &edges {
                         match dep.dep_type.as_str() {
                             "parent-child" => {
                                 bead.parent_id = Some(dep.depends_on_id.clone());
@@ -1065,8 +1118,8 @@ pub fn recompute_epic_statuses(issues_path: &Path) -> Result<Vec<String>, String
 
     // First pass: Extract from dependencies and parent field
     for bead in &mut beads {
-        if let Some(RawDependencies::Legacy(ref legacy_deps)) = bead.dependencies {
-            for dep in legacy_deps {
+        if let Some(RawDependencies::Objects(ref edges)) = bead.dependencies {
+            for dep in edges {
                 if dep.dep_type == "parent-child" {
                     bead.parent_id = Some(dep.depends_on_id.clone());
                     parent_to_children
@@ -1336,13 +1389,13 @@ mod tests {
         let json = r#"{"id":"bead-a","title":"Bead A","status":"open","dependencies":[{"issue_id":"bead-a","depends_on_id":"bead-b","type":"relates-to","created_at":"2026-01-27T00:00:00Z","created_by":"user"},{"issue_id":"bead-a","depends_on_id":"bead-c","type":"parent-child","created_at":"2026-01-27T00:00:00Z","created_by":"user"}]}"#;
         let bead: Bead = serde_json::from_str(json).unwrap();
         assert!(bead.dependencies.is_some());
-        if let Some(RawDependencies::Legacy(deps)) = &bead.dependencies {
+        if let Some(RawDependencies::Objects(deps)) = &bead.dependencies {
             assert_eq!(deps.len(), 2);
             assert_eq!(deps[0].dep_type, "relates-to");
             assert_eq!(deps[0].depends_on_id, "bead-b");
             assert_eq!(deps[1].dep_type, "parent-child");
         } else {
-            panic!("Expected Legacy dependencies");
+            panic!("Expected Objects dependencies");
         }
     }
 
@@ -1385,6 +1438,150 @@ mod tests {
         let json = r#"{"id":"task-2","title":"Simple","status":"open"}"#;
         let bead: Bead = serde_json::from_str(json).unwrap();
         assert!(bead.dependencies.is_none());
+    }
+
+    // ── bd 1.1.0 (Dolt schema v53) dependency format ────────────────────
+
+    /// Realistic `bd show --json` payload from bd 1.1.0: `dependencies` is an
+    /// array of FULL issue objects, where `id` is the target and the relation
+    /// type lives in `dependency_type` (no `depends_on_id`, no `type`).
+    const BD_110_DEPENDENCIES_JSON: &str = r#"{
+        "id":"bweb-489.4",
+        "title":"Package and switch the primary UI",
+        "status":"closed",
+        "dependencies":[
+            {"id":"bweb-489.3","title":"Validate interop","description":"d","status":"closed",
+             "priority":1,"issue_type":"task","owner":"o","created_at":"2026-07-12T10:03:04Z",
+             "created_by":"badigit","updated_at":"2026-07-18T10:27:46Z",
+             "labels":["migration"],"dependency_type":"blocks"},
+            {"id":"bweb-489","title":"Migrate to Direct Dolt","status":"open",
+             "issue_type":"epic","dependency_type":"parent-child"},
+            {"id":"bweb-77","title":"Related work","status":"open",
+             "dependency_type":"relates-to"}
+        ]
+    }"#;
+
+    #[test]
+    fn test_parse_bd_110_object_dependencies() {
+        // bd 1.1.0 objects must parse without breaking the whole bead
+        let bead: Bead = serde_json::from_str(BD_110_DEPENDENCIES_JSON).unwrap();
+        let Some(RawDependencies::Objects(edges)) = &bead.dependencies else {
+            panic!("Expected Objects dependencies, got {:?}", bead.dependencies);
+        };
+        assert_eq!(edges.len(), 3);
+        // `id` is the dependency target, `dependency_type` is the relation type
+        assert_eq!(edges[0].depends_on_id, "bweb-489.3");
+        assert_eq!(edges[0].dep_type, "blocks");
+        assert_eq!(edges[1].depends_on_id, "bweb-489");
+        assert_eq!(edges[1].dep_type, "parent-child");
+        assert_eq!(edges[2].dep_type, "relates-to");
+    }
+
+    #[test]
+    fn test_post_process_bd_110_dependencies_maps_relations() {
+        // parent-child -> parent_id, relates-to -> relates_to, blocks -> deps
+        let bead: Bead = serde_json::from_str(BD_110_DEPENDENCIES_JSON).unwrap();
+        let processed = post_process_beads(vec![bead]);
+        let bead = &processed[0];
+        assert_eq!(bead.parent_id, Some("bweb-489".to_string()));
+        assert_eq!(bead.relates_to, Some(vec!["bweb-77".to_string()]));
+        assert_eq!(bead.deps, Some(vec!["bweb-489.3".to_string()]));
+    }
+
+    #[test]
+    fn test_post_process_legacy_dependencies_maps_relations() {
+        // Same mapping must still hold for the legacy {depends_on_id, type} shape
+        let json = r#"{"id":"bead-a","title":"A","status":"open","dependencies":[
+            {"issue_id":"bead-a","depends_on_id":"bead-b","type":"relates-to"},
+            {"issue_id":"bead-a","depends_on_id":"bead-c","type":"parent-child"},
+            {"issue_id":"bead-a","depends_on_id":"bead-d","type":"blocks"}
+        ]}"#;
+        let bead: Bead = serde_json::from_str(json).unwrap();
+        let processed = post_process_beads(vec![bead]);
+        let bead = &processed[0];
+        assert_eq!(bead.parent_id, Some("bead-c".to_string()));
+        assert_eq!(bead.relates_to, Some(vec!["bead-b".to_string()]));
+        assert_eq!(bead.deps, Some(vec!["bead-d".to_string()]));
+    }
+
+    #[test]
+    fn test_post_process_string_id_dependencies_map_to_blocking() {
+        // Flat string IDs stay blocking-only deps
+        let json = r#"{"id":"task-71","title":"T","status":"open","dependencies":["task-67"]}"#;
+        let bead: Bead = serde_json::from_str(json).unwrap();
+        let processed = post_process_beads(vec![bead]);
+        assert_eq!(processed[0].deps, Some(vec!["task-67".to_string()]));
+        assert_eq!(processed[0].parent_id, None);
+    }
+
+    #[test]
+    fn test_unrecognized_dependency_entry_does_not_break_bead() {
+        // A dependency object with no usable target must be skipped, not abort
+        // parsing of the entire bead (regression: bd 1.1.0 format broke every bead)
+        let json = r#"{"id":"task-9","title":"Still parses","status":"open","dependencies":[
+            {"unexpected":"shape"},
+            {"id":"task-8","dependency_type":"blocks"}
+        ]}"#;
+        let bead: Bead = serde_json::from_str(json).unwrap();
+        assert_eq!(bead.title, "Still parses");
+        let Some(RawDependencies::Objects(edges)) = &bead.dependencies else {
+            panic!("Expected Objects dependencies, got {:?}", bead.dependencies);
+        };
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].depends_on_id, "task-8");
+    }
+
+    #[test]
+    fn test_parse_real_bd_list_dependency_shape() {
+        // Verbatim key set emitted by `bd list --json --all` on bd 1.1.0,
+        // which still uses the legacy edge shape (unlike `bd show --json`).
+        let json = r#"{"id":"bweb-489.12.2","title":"T","status":"open","dependencies":[
+            {"issue_id":"bweb-489.12.2","depends_on_id":"bweb-489.12.1","type":"blocks",
+             "created_at":"2026-07-17T18:22:03Z","created_by":"badigit","metadata":{}}
+        ]}"#;
+        let bead: Bead = serde_json::from_str(json).unwrap();
+        let Some(RawDependencies::Objects(edges)) = &bead.dependencies else {
+            panic!("Expected Objects dependencies");
+        };
+        assert_eq!(edges[0].depends_on_id, "bweb-489.12.1");
+        assert_eq!(edges[0].dep_type, "blocks");
+    }
+
+    #[test]
+    fn test_bead_list_with_bd_110_dependencies_parses_whole_list() {
+        // `read_beads_from_cli` deserializes the entire response as Vec<Bead>,
+        // so one unsupported dependency shape used to discard every bead.
+        let json = format!("[{},{}]", BD_110_DEPENDENCIES_JSON, r#"{"id":"x-1","title":"Plain","status":"open"}"#);
+        let beads: Vec<Bead> = serde_json::from_str(&json).unwrap();
+        assert_eq!(beads.len(), 2);
+        assert_eq!(beads[1].id, "x-1");
+    }
+
+    #[test]
+    fn test_mixed_legacy_and_modern_dependency_objects() {
+        // Legacy `depends_on_id` must win over `id` on a per-entry basis
+        let json = r#"{"id":"m-1","title":"Mixed","status":"open","dependencies":[
+            {"issue_id":"m-1","depends_on_id":"legacy-target","type":"relates-to"},
+            {"id":"modern-target","dependency_type":"parent-child"}
+        ]}"#;
+        let bead: Bead = serde_json::from_str(json).unwrap();
+        let Some(RawDependencies::Objects(edges)) = &bead.dependencies else {
+            panic!("Expected Objects dependencies");
+        };
+        assert_eq!(edges[0].depends_on_id, "legacy-target");
+        assert_eq!(edges[1].depends_on_id, "modern-target");
+        assert_eq!(edges[1].dep_type, "parent-child");
+    }
+
+    #[test]
+    fn test_dependency_object_without_type_defaults_to_blocking() {
+        // Missing relation type is treated as a blocking dependency
+        let json = r#"{"id":"task-9","title":"T","status":"open","dependencies":[{"id":"task-8"}]}"#;
+        let bead: Bead = serde_json::from_str(json).unwrap();
+        let Some(RawDependencies::Objects(edges)) = &bead.dependencies else {
+            panic!("Expected Objects dependencies");
+        };
+        assert_eq!(edges[0].dep_type, "blocks");
     }
 
     #[test]

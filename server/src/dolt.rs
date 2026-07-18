@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::net::TcpStream;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::routes::beads::{Bead, Comment};
 
@@ -261,6 +261,13 @@ impl DoltManager {
             values.push("''");
         }
 
+        // Dependency layout must be introspected before the transaction starts,
+        // since the transaction takes exclusive hold of the connection.
+        let dep_schema = match parent_id {
+            Some(_) => Some(detect_dependency_schema(&mut conn, db_name).await),
+            None => None,
+        };
+
         let query = format!(
             "INSERT INTO `{}`.issues ({}) VALUES ({})",
             db_name,
@@ -290,12 +297,30 @@ impl DoltManager {
         .map_err(|e| DoltError::QueryFailed(format!("insert: {}", e)))?;
 
         // Insert parent-child dependency if parent specified
-        if let Some(parent) = parent_id {
+        if let (Some(parent), Some(dep_schema)) = (parent_id, dep_schema.as_ref()) {
+            let mut dep_columns = vec![
+                "issue_id".to_string(),
+                dep_schema.target_column.clone(),
+                "type".to_string(),
+                "created_by".to_string(),
+            ];
+            let mut dep_values = vec![":child", ":parent", "'parent-child'", ":created_by"];
+            // v53+ surrogate primary key has no default — generate one.
+            let dep_id = uuid::Uuid::new_v4().to_string();
+            if dep_schema.has_surrogate_id {
+                dep_columns.insert(0, "id".to_string());
+                dep_values.insert(0, ":dep_id");
+            }
+
             let dep_query = format!(
-                "INSERT INTO `{}`.dependencies \
-                 (issue_id, depends_on_id, `type`, created_by) \
-                 VALUES (:child, :parent, 'parent-child', :created_by)",
-                db_name
+                "INSERT INTO `{}`.dependencies ({}) VALUES ({})",
+                db_name,
+                dep_columns
+                    .iter()
+                    .map(|c| format!("`{}`", c))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                dep_values.join(", "),
             );
             tx.exec_drop(
                 &dep_query,
@@ -303,6 +328,7 @@ impl DoltManager {
                     "child" => id,
                     "parent" => parent,
                     "created_by" => "web-ui",
+                    "dep_id" => &dep_id,
                 },
             )
             .await
@@ -665,15 +691,84 @@ async fn merge_comments(
     Ok(beads)
 }
 
+/// Target column holding the depended-on issue id in bd ≥ 1.1.0 (Dolt schema v53).
+const DEP_TARGET_COLUMN: &str = "depends_on_issue_id";
+/// Target column name used by bd ≤ 1.0.x (Dolt schema ≤ v32).
+const DEP_TARGET_COLUMN_LEGACY: &str = "depends_on_id";
+
+/// Column layout of the `dependencies` table.
+///
+/// Migration 0041 (bd 1.1.0, Dolt schema v53) renamed `depends_on_id` to
+/// `depends_on_issue_id`, added the alternative `depends_on_wisp_id` /
+/// `depends_on_external` targets, and introduced a surrogate `id` primary key
+/// that has no default and must therefore be supplied on INSERT.
+#[derive(Debug, Clone, PartialEq)]
+struct DependencySchema {
+    /// Column holding the target issue id.
+    target_column: String,
+    /// Whether the table has the surrogate `id` primary key.
+    has_surrogate_id: bool,
+}
+
+impl DependencySchema {
+    /// Derives the layout from the table's column names.
+    ///
+    /// Falls back to the current (v53) layout when introspection yields nothing,
+    /// so an unreadable `information_schema` never pins us to the dead column.
+    fn from_columns(columns: &[String]) -> Self {
+        let has = |name: &str| columns.iter().any(|c| c.eq_ignore_ascii_case(name));
+
+        if !has(DEP_TARGET_COLUMN) && has(DEP_TARGET_COLUMN_LEGACY) {
+            return Self {
+                target_column: DEP_TARGET_COLUMN_LEGACY.to_string(),
+                has_surrogate_id: has("id"),
+            };
+        }
+        Self {
+            target_column: DEP_TARGET_COLUMN.to_string(),
+            has_surrogate_id: columns.is_empty() || has("id"),
+        }
+    }
+}
+
+/// Introspects the `dependencies` table layout of the given database.
+async fn detect_dependency_schema(
+    conn: &mut mysql_async::Conn,
+    db_name: &str,
+) -> DependencySchema {
+    let query = "SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS \
+                 WHERE TABLE_SCHEMA = :db AND TABLE_NAME = 'dependencies'";
+    let columns: Vec<String> = conn
+        .exec_map(
+            query,
+            mysql_async::params! { "db" => db_name },
+            |name: String| name,
+        )
+        .await
+        .unwrap_or_else(|e| {
+            warn!(
+                "Failed to introspect dependencies schema for db {}: {} — assuming current layout",
+                db_name, e
+            );
+            Vec::new()
+        });
+    DependencySchema::from_columns(&columns)
+}
+
 /// Queries dependencies and merges parent/blocking/related into beads.
 async fn merge_dependencies(
     conn: &mut mysql_async::Conn,
     db_name: &str,
     beads: &mut [Bead],
 ) -> Result<(), DoltError> {
+    let schema = detect_dependency_schema(conn, db_name).await;
+    // Rows targeting a wisp or an external ref (v53+) have a NULL issue target
+    // and are irrelevant to the board — filter them out in SQL.
     let query = format!(
-        "SELECT issue_id, depends_on_id, `type` FROM `{}`.dependencies",
-        db_name
+        "SELECT issue_id, `{col}` AS depends_on, `type` FROM `{db}`.dependencies \
+         WHERE `{col}` IS NOT NULL",
+        col = schema.target_column,
+        db = db_name
     );
     let rows: Vec<Row> = conn
         .query(&query)
@@ -686,7 +781,7 @@ async fn merge_dependencies(
 
     for row in &rows {
         let issue_id = get_str(row, "issue_id");
-        let depends_on = get_str(row, "depends_on_id");
+        let depends_on = get_str(row, "depends_on");
         match get_str(row, "type").as_str() {
             "parent-child" | "parent" => {
                 parent_map.insert(issue_id, depends_on);
@@ -787,6 +882,51 @@ pub fn database_name_for_project(project_path: &Path) -> Option<String> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    // ── DependencySchema tests ─────────────────────────────────────────
+
+    fn cols(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn test_dependency_schema_v53() {
+        // bd 1.1.0 / Dolt schema v53: renamed target column + surrogate id PK
+        let schema = DependencySchema::from_columns(&cols(&[
+            "id",
+            "issue_id",
+            "type",
+            "created_at",
+            "created_by",
+            "depends_on_issue_id",
+            "depends_on_wisp_id",
+            "depends_on_external",
+        ]));
+        assert_eq!(schema.target_column, "depends_on_issue_id");
+        assert!(schema.has_surrogate_id);
+    }
+
+    #[test]
+    fn test_dependency_schema_legacy_v32() {
+        // Pre-migration schema: depends_on_id, composite PK (no `id` column)
+        let schema = DependencySchema::from_columns(&cols(&[
+            "issue_id",
+            "depends_on_id",
+            "type",
+            "created_at",
+            "created_by",
+        ]));
+        assert_eq!(schema.target_column, "depends_on_id");
+        assert!(!schema.has_surrogate_id);
+    }
+
+    #[test]
+    fn test_dependency_schema_defaults_to_current_when_unknown() {
+        // Empty/unreadable introspection must not fall back to the dead column
+        let schema = DependencySchema::from_columns(&[]);
+        assert_eq!(schema.target_column, "depends_on_issue_id");
+        assert!(schema.has_surrogate_id);
+    }
 
     // ── database_name_for_project tests ─────────────────────────────────
 
