@@ -1,98 +1,64 @@
 #!/usr/bin/env node
 'use strict';
 
-// PostToolUse:Bash (async) — Capture knowledge from bd comment commands
+// PostToolUse:Bash — Persist LEARNED: insights from bd comments as bd memories.
+//
+// Watches `bd comments add {ID} "... LEARNED: ..."` (and legacy `bd comment`)
+// and stores the LEARNED content via `bd remember` so it is surfaced by
+// `bd prime` in every future session. Search with: bd memories "keyword".
 
-const fs = require('fs');
-const path = require('path');
-const { readStdinJSON, getField, getProjectDir, runHook } = require('./hook-utils.cjs');
+const { readStdinJSON, getField, execCommand, runHook } = require('./hook-utils.cjs');
 
-runHook('memory-capture', () => {
-  const input = readStdinJSON();
-  const toolName = getField(input, 'tool_name');
-  if (toolName !== 'Bash') process.exit(0);
+/** Extract { beadId, learned } from a bd comment command, or null. */
+function parseLearnedComment(command) {
+  // `bd comments add <id> "..."` / `bd comment <id> "..."`
+  const m = command.match(/bd\s+comments?(?:\s+add)?\s+([A-Za-z0-9._-]+)\s+["']([\s\S]*)["']\s*$/);
+  if (!m) return null;
+  const learnedMatch = m[2].slice(0, 4096).match(/LEARNED:\s*([\s\S]*)/);
+  if (!learnedMatch) return null;
+  const learned = learnedMatch[1].trim().slice(0, 2048);
+  return learned ? { beadId: m[1], learned } : null;
+}
 
-  const command = getField(input, 'tool_input.command');
-  if (!command) process.exit(0);
-
-  // Only process bd comment commands containing LEARNED:
-  if (!/bd\s+comment\s+/.test(command)) process.exit(0);
-  if (!command.includes('LEARNED:')) process.exit(0);
-
-  // Extract BEAD_ID (argument after "bd comment")
-  const beadMatch = command.match(/bd\s+comment\s+([A-Za-z0-9._-]+)\s+/);
-  if (!beadMatch) process.exit(0);
-  const beadId = beadMatch[1];
-
-  // Extract the comment body (content inside quotes after bead ID)
-  const bodyMatch = command.match(/bd\s+comment\s+[A-Za-z0-9._-]+\s+["'](.*)["']\s*$/s);
-  if (!bodyMatch) process.exit(0);
-  const commentBody = bodyMatch[1].slice(0, 4096);
-  if (!commentBody) process.exit(0);
-
-  // Extract LEARNED content
-  const learnedMatch = commentBody.match(/LEARNED:\s*([\s\S]*)/);
-  if (!learnedMatch) process.exit(0);
-  const content = learnedMatch[1].trim().slice(0, 2048);
-  if (!content) process.exit(0);
-
-  const type = 'learned';
-
-  // Generate key (type + slugified first 60 chars)
+/** Stable slug key so re-runs update the same memory instead of duplicating. */
+function memoryKey(content) {
   const slug = content
     .slice(0, 60)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
-  const key = `${type}-${slug}`;
+  return `learned-${slug}`;
+}
 
-  // Detect source: inside worktree → supervisor, otherwise orchestrator
-  const cwd = getField(input, 'cwd');
-  const source = cwd.replace(/\\/g, '/').includes('.worktrees/') ? 'supervisor' : 'orchestrator';
+/**
+ * Invoke `bd remember <content> --key <key>`.
+ *
+ * Primary path: no shell — args are passed verbatim (correct quoting).
+ * On Windows `bd` is usually an npm .cmd shim which needs a shell, so on
+ * ENOENT we fall back to shell mode with sanitised content (quotes/newlines
+ * collapsed — cmd.exe cannot round-trip them safely).
+ */
+function bdRemember(content, key) {
+  const direct = execCommand('bd', ['remember', content, '--key', key], { shell: false });
+  if (direct !== null) return direct;
 
-  // Build tags
-  const tags = [type];
-  const TAG_KEYWORDS = [
-    'swift', 'swiftui', 'appkit', 'menubar', 'api', 'security', 'test', 'database',
-    'networking', 'ui', 'layout', 'performance', 'crash', 'bug', 'fix', 'workaround',
-    'gotcha', 'pattern', 'convention', 'architecture', 'auth', 'middleware',
-    'async', 'concurrency', 'model', 'protocol', 'adapter', 'scanner', 'engine',
-  ];
-  const contentLower = content.toLowerCase();
-  for (const tag of TAG_KEYWORDS) {
-    if (contentLower.includes(tag)) tags.push(tag);
-  }
+  const safe = content.replace(/"/g, "'").replace(/\r?\n/g, ' ');
+  return execCommand('bd', ['remember', `"${safe}"`, '--key', key]);
+}
 
-  // Build entry
-  const entry = {
-    key,
-    type,
-    content,
-    source,
-    tags,
-    ts: Math.floor(Date.now() / 1000),
-    bead: beadId,
-  };
+runHook('memory-capture', () => {
+  const input = readStdinJSON();
+  if (getField(input, 'tool_name') !== 'Bash') process.exit(0);
 
-  // Resolve memory directory
-  const memoryDir = path.join(getProjectDir(), '.beads', 'memory');
-  fs.mkdirSync(memoryDir, { recursive: true });
-  const knowledgeFile = path.join(memoryDir, 'knowledge.jsonl');
+  const command = getField(input, 'tool_input.command');
+  if (!command || !command.includes('LEARNED:')) process.exit(0);
 
-  // Append entry
-  fs.appendFileSync(knowledgeFile, JSON.stringify(entry) + '\n');
+  const parsed = parseLearnedComment(command);
+  if (!parsed) process.exit(0);
 
-  // Rotation: archive oldest 500 when file exceeds 1000 lines
-  try {
-    const lines = fs.readFileSync(knowledgeFile, 'utf8').split('\n').filter(Boolean);
-    if (lines.length > 1000) {
-      const archiveFile = path.join(memoryDir, 'knowledge.archive.jsonl');
-      const toArchive = lines.slice(0, 500);
-      const toKeep = lines.slice(500);
-      fs.appendFileSync(archiveFile, toArchive.join('\n') + '\n');
-      fs.writeFileSync(knowledgeFile, toKeep.join('\n') + '\n');
-    }
-  } catch {
-    // Rotation failure is non-critical
+  const content = `${parsed.learned} [bead: ${parsed.beadId}]`;
+  const result = bdRemember(content, memoryKey(parsed.learned));
+  if (result !== null) {
+    process.stdout.write(`[memory-capture] stored as bd memory: ${memoryKey(parsed.learned)}\n`);
   }
 });

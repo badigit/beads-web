@@ -7,6 +7,11 @@
 
 'use strict';
 
+// Hooks are short-lived CLI processes; deprecation noise on stderr (e.g.
+// DEP0190 for the Windows shell:true path below) must not leak into hook
+// output shown to the user.
+process.noDeprecation = true;
+
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -99,7 +104,8 @@ function block(reason) {
   // In bypass mode, convert block to approve with warning
   if (_permissionMode === 'bypassPermissions') {
     process.stdout.write(`[HOOK WARNING — would block] ${reason}\n`);
-    approve();
+    approve(); // approve() calls process.exit(0)
+    return;    // unreachable, but signals intent to readers
   }
   const out = { decision: 'block', reason };
   process.stdout.write(JSON.stringify(out));
@@ -134,8 +140,10 @@ function execCommand(cmd, args, opts) {
       timeout: 10000,
       stdio: ['pipe', 'pipe', 'pipe'],
       // On Windows, npm CLIs (bd, gh) are .cmd wrappers that
-      // execFileSync can't find without shell. Args stay as array
-      // so Node still escapes them properly — no injection risk.
+      // execFileSync can't find without shell. NOTE: with shell:true Node
+      // does NOT escape args (DEP0190) — callers must only pass static
+      // strings or regex-validated ids, or override with { shell: false }
+      // and sanitise free-form content themselves (see memory-capture.cjs).
       shell: process.platform === 'win32',
       ...opts,
     });
