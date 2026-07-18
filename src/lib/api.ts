@@ -437,6 +437,34 @@ export const dolt = {
 };
 
 /**
+ * A single hit from the global cross-project search.
+ */
+export interface SearchResult {
+  /** Project id in the local SQLite registry — `null` when not registered. */
+  project_id: string | null;
+  /** Display name; falls back to the Dolt database name. */
+  project_name: string;
+  /** Dolt database the hit came from. */
+  database: string;
+  /** Full, globally unique bead id (`prefix-suffix`). */
+  bead_id: string;
+  title: string;
+  status: string;
+}
+
+/**
+ * Global search API.
+ *
+ * The backend always answers 200 with an already-ranked flat array (empty for
+ * queries shorter than 2 chars or when Dolt is unreachable), so results are
+ * rendered in the order they arrive.
+ */
+export const search = {
+  query: (q: string, signal?: AbortSignal) =>
+    fetchApi<SearchResult[]>(`/api/search?q=${encodeURIComponent(q)}`, { signal }),
+};
+
+/**
  * Version check response
  */
 export interface VersionCheckResponse {
