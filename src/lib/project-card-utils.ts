@@ -12,7 +12,8 @@ export function formatProjectName(name: string): string {
   return name
     .replace(/[-_]/g, " ") // Replace hyphens and underscores with spaces
     .replace(/([a-z])([A-Z])/g, "$1 $2") // Add space before capitals in camelCase
-    .replace(/\b\w/g, (c) => c.toUpperCase()); // Capitalize first letter of each word
+    .replace(/\b\w/g, (c) => c.toUpperCase()) // Capitalize first letter of each word
+    .trim(); // Leading separators (e.g. "_my-project") must not skew sorting
 }
 
 /**

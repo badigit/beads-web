@@ -22,6 +22,10 @@ describe("formatProjectName", () => {
   it("handles mixed separators", () => {
     expect(formatProjectName("beads-web_uiKit")).toBe("Beads Web Ui Kit");
   });
+
+  it("trims leading separators so alphabetical sorting is not skewed", () => {
+    expect(formatProjectName("_my_llm-skills-agents")).toBe("My Llm Skills Agents");
+  });
 });
 
 describe("getFsPath", () => {
