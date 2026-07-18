@@ -111,9 +111,13 @@ server/
 
 ## Testing
 
-- **Frontend**: No test framework configured. No test files exist.
-- **Backend**: Rust built-in `#[cfg(test)]` with `#[test]` functions. `tempfile` in dev-dependencies.
-- **Manual testing**: Puppeteer/Playwright for client-side verification (installed as dev dep)
+- **Frontend**: Vitest 4 (`npm test` = `vitest run`; `npm run test:watch` for watch mode). Config in `vitest.config.ts`: jsdom environment, `globals: true`, setup file `src/test-setup.ts` (@testing-library/jest-dom), `@` alias → `./src`.
+- **Component/hook tests**: Testing Library (`@testing-library/react`) — render + user interaction, no snapshot testing.
+- **Test file layout**: `__tests__/*.test.ts(x)` next to the code under test (`src/lib/__tests__/`, `src/hooks/__tests__/`, `src/components/__tests__/`); co-located `*.test.ts` also works. Currently 15 files / 120 tests.
+- **Vitest excludes** (see `vitest.config.ts`): `tests/**` (Playwright e2e), `.worktrees/**`, `node_modules`, `dist`, `out`.
+- **E2E**: Playwright (`playwright.config.ts`, specs in `tests/`, e.g. `tests/themes.spec.ts`) — chromium, baseURL localhost:3008, needs a running dev server.
+- **Backend**: Rust built-in `#[cfg(test)]` with `#[test]` functions, run via `cargo test`. `tempfile` in dev-dependencies.
+- **Full pre-commit gate**: `npm run precommit:full` — lint + typecheck + build + `cargo clippy -- -D warnings` + `cargo test`.
 
 ## Do NOT Use
 
