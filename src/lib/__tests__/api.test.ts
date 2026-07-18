@@ -145,3 +145,48 @@ describe('fetchApi error handling', () => {
     })).rejects.toThrow('API error: 500 Internal Server Error');
   });
 });
+
+describe('api.search', () => {
+  it('encodes the query into GET /api/search', async () => {
+    mockFetch.mockResolvedValue(mockResponse([]));
+
+    await api.search.query('bweb-489 & co');
+
+    const [url] = mockFetch.mock.calls[0];
+    expect(url).toBe('/api/search?q=bweb-489%20%26%20co');
+  });
+
+  it('passes the abort signal through so stale requests can be cancelled', async () => {
+    mockFetch.mockResolvedValue(mockResponse([]));
+    const controller = new AbortController();
+
+    await api.search.query('bweb', controller.signal);
+
+    const [, options] = mockFetch.mock.calls[0];
+    expect(options.signal).toBe(controller.signal);
+  });
+
+  it('returns the flat result array as ranked by the server', async () => {
+    const hits: api.SearchResult[] = [
+      {
+        project_id: 'p1',
+        project_name: 'beads-web',
+        database: 'beads_web',
+        bead_id: 'bweb-489.12.2',
+        title: 'Command palette',
+        status: 'open',
+      },
+      {
+        project_id: null,
+        project_name: 'orphan_db',
+        database: 'orphan_db',
+        bead_id: 'orph-1',
+        title: 'Unregistered',
+        status: 'closed',
+      },
+    ];
+    mockFetch.mockResolvedValue(mockResponse(hits));
+
+    await expect(api.search.query('bweb')).resolves.toEqual(hits);
+  });
+});
