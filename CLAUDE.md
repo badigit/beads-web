@@ -72,19 +72,25 @@ bd create "Fix: [desc]" -d "Follow-up to {OLD_ID}: [details]"
 bd dep relate {NEW_ID} {OLD_ID}
 ```
 
-## Knowledge Base
+## Knowledge Base (bd memories)
+
+Cross-session knowledge lives in beads memories (stored with the project on the central Dolt server, injected automatically at `bd prime`).
 
 **Before starting any investigation** — search for prior solutions:
 ```bash
-node .beads/memory/recall.cjs "keyword"
+bd memories "keyword"   # list/search memories
+bd recall <key>         # full content of one memory
 ```
 Do this EVERY TIME before diving into unfamiliar code, debugging errors, or choosing an approach.
 
-**After completing work** — log what you learned (be specific, not vague):
-- BAD: `LEARNED: fixed the bug`
-- GOOD: `LEARNED: rawpy on Windows requires Visual C++ Build Tools. pip install fails without them. Fix: install build tools or use prebuilt wheel from https://...`
+**After completing work** — store what you learned (be specific, not vague):
+```bash
+bd remember "[problem] → [solution]. [context why]"
+```
+- BAD: `bd remember "fixed the bug"`
+- GOOD: `bd remember "rawpy on Windows requires Visual C++ Build Tools → pip install fails without them; install build tools or use a prebuilt wheel"`
 
-The more specific the LEARNED comment, the more useful it is next time.
+The more specific the memory, the more useful it is next time. No reusable insight — don't store noise.
 
 ## Agents
 
@@ -97,11 +103,13 @@ The more specific the LEARNED comment, the more useful it is next time.
 - GitHub: https://github.com/weselow/beads-web
 - npm package name: `beads-web`
 - Default branch: `main` (merged from production, production branch kept for now)
-- 7 themes implemented with CSS variables and persistence
-- Dolt direct SQL integration working
+- 7 themes implemented with CSS variables and persistence (`src/lib/themes.ts`)
+- **Direct Dolt is the primary local deployment**: single binary (`bin/beads-web-win-x64-direct.exe`) on port **3056**, reads all databases straight from the central Dolt server (10.9.0.105:3307) — no per-project bd CLI needed for reads. Run via pm2 (`pm2.config.cjs`) or `scripts/start-direct-dolt.ps1`; build via `scripts/build-windows-direct.ps1`; docs in `docs/direct-dolt.md`
+- Frontend test suite: Vitest, 15 files / 120 tests, all green (`npm test`)
 - Windows compatibility fixed (multi-drive paths, validation)
 - GitHub Releases CI configured (`.github/workflows/release.yml`) — cross-platform binaries on tag push
 - Listed in [beads COMMUNITY_TOOLS.md](https://github.com/steveyegge/beads/blob/main/docs/COMMUNITY_TOOLS.md)
+- Workspace beads config: `validation.on-create = warn` (create-time quality checks warn, don't block)
 
 ## Distribution
 
