@@ -183,6 +183,7 @@ export function useBeadFilters(
       if (debouncedSearch) {
         const searchLower = debouncedSearch.toLowerCase();
         const matchesSearch =
+          bead.id.toLowerCase().includes(searchLower) ||
           bead.title.toLowerCase().includes(searchLower) ||
           (bead.description &&
             bead.description.toLowerCase().includes(searchLower));
