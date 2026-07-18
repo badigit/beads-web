@@ -13,9 +13,37 @@ if (-not (Test-Path -LiteralPath $binary)) {
   throw "Direct Dolt binary not found: $binary. Run scripts\build-windows-direct.ps1 first."
 }
 
-$bdDir = "C:\Users\Dee\go\bin"
-if (Test-Path -LiteralPath (Join-Path $bdDir "bd.exe")) {
-  $env:PATH = "$bdDir;$env:PATH"
+# The server resolves the bd CLI with `where bd` and spawns the first hit, so a real
+# bd.exe must be on PATH -- shell shims (bd, bd.cmd, bd.ps1) are not spawnable by the
+# server even though `Get-Command bd` resolves them.
+if (-not (Get-Command "bd.exe" -ErrorAction SilentlyContinue)) {
+  # built by interpolation, not Join-Path: Join-Path resolves the drive qualifier and
+  # would throw under $ErrorActionPreference = "Stop" if the root were unavailable.
+  $wingetPackages = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages"
+  $bdCandidateDirs = @()
+
+  # winget installs bd into the package folder itself (no alias in WinGet\Links),
+  # and the folder suffix changes on reinstall -- match by prefix.
+  if (Test-Path -LiteralPath $wingetPackages) {
+    $bdCandidateDirs += @(
+      Get-ChildItem -LiteralPath $wingetPackages -Directory -Filter "GasTownHall.Beads_*" -ErrorAction SilentlyContinue |
+        Sort-Object Name |
+        Select-Object -ExpandProperty FullName
+    )
+  }
+
+  # historical `go install` location, kept as a fallback
+  $bdCandidateDirs += "$env:USERPROFILE\go\bin"
+
+  $bdDir = $bdCandidateDirs |
+    Where-Object { Test-Path -LiteralPath "$_\bd.exe" } |
+    Select-Object -First 1
+
+  if ($bdDir) {
+    $env:PATH = "$bdDir;$env:PATH"
+  } else {
+    Write-Warning "bd.exe not found (checked PATH, $wingetPackages\GasTownHall.Beads_*, and $env:USERPROFILE\go\bin). Direct Dolt will still work, but the beads-web CLI fallback will be unavailable."
+  }
 }
 
 $env:PORT = "$Port"
