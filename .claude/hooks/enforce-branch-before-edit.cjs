@@ -6,9 +6,24 @@
 
 const path = require('path');
 const {
-  readStdinJSON, getField, deny, ask,
+  readStdinJSON, getField, ask,
   getCurrentBranch, containsPathSegment, isSubagent, runHook,
 } = require('./hook-utils.cjs');
+
+/** Human-readable size of the pending change, for the ask() prompt. */
+function describeChange(input, toolName) {
+  if (toolName === 'Edit') {
+    const oldStr = getField(input, 'tool_input.old_string');
+    const newStr = getField(input, 'tool_input.new_string');
+    const newLines = newStr ? newStr.split('\n').length : 0;
+    const oldChars = oldStr ? oldStr.length : 0;
+    const newChars = newStr ? newStr.length : 0;
+    return `~${newLines} lines (${oldChars} → ${newChars} chars)`;
+  }
+  const content = getField(input, 'tool_input.content');
+  const contentLines = content ? content.split('\n').length : 0;
+  return `~${contentLines} lines (new file)`;
+}
 
 runHook('enforce-branch-before-edit', () => {
   const input = readStdinJSON();
@@ -37,34 +52,22 @@ runHook('enforce-branch-before-edit', () => {
 
   // --- Branch checks ---
   const branch = getCurrentBranch();
+  const sizeInfo = describeChange(input, toolName);
 
-  // On main/master → hard deny
+  // On main/master → ask (user may legitimately work without a worktree)
   if (branch === 'main' || branch === 'master') {
-    deny(
-      `Cannot edit files on ${branch} branch.\n\n` +
-      'For quick fixes (<10 lines):\n' +
-      '  git checkout -b quick-fix-description\n' +
-      '  Then retry the edit (you\'ll be prompted for approval)\n\n' +
-      'For larger changes:\n' +
-      '  Use the full bead workflow with supervisors.'
+    ask(
+      `Edit directly on '${branch}'?\n` +
+      `  File: ${fileName}\n` +
+      `  Change: ${sizeInfo}\n\n` +
+      'Approve to edit on the default branch.\n' +
+      'Deny to branch first:\n' +
+      '  git checkout -b quick-fix-description  (quick fix <10 lines)\n' +
+      '  or use the full bead workflow (.worktrees/bd-{BEAD_ID}).'
     );
   }
 
   // On feature branch → quick-fix ask with change size
-  let sizeInfo;
-  if (toolName === 'Edit') {
-    const oldStr = getField(input, 'tool_input.old_string');
-    const newStr = getField(input, 'tool_input.new_string');
-    const newLines = newStr ? newStr.split('\n').length : 0;
-    const oldChars = oldStr ? oldStr.length : 0;
-    const newChars = newStr ? newStr.length : 0;
-    sizeInfo = `~${newLines} lines (${oldChars} → ${newChars} chars)`;
-  } else {
-    const content = getField(input, 'tool_input.content');
-    const contentLines = content ? content.split('\n').length : 0;
-    sizeInfo = `~${contentLines} lines (new file)`;
-  }
-
   ask(
     `Quick fix on branch '${branch}'?\n` +
     `  File: ${fileName}\n` +

@@ -17,7 +17,7 @@ const {
  * PR merges (see .claude/rules/beads-workflow.md).  'closed' covers agents that
  * finished and closed it themselves; 'blocked'/'deferred' cover work halted for
  * an external reason.  'open' is NOT accepted: it means work never started.
- * The old 'inreview' status was removed from bd in v1.0.2 and is now invalid.
+ * The old in-review status was removed from bd in v1.0.2 and is now invalid.
  *
  * Must stay above the runHook() call below — `const` is not hoisted, and the
  * main body runs at module load time.

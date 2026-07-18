@@ -2,76 +2,16 @@
   "hooks": {
     "PreToolUse": [
       {
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/block-orchestrator-tools.sh"
-          }
-        ]
-      },
-      {
         "matcher": "Task",
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/enforce-bead-for-supervisor.sh"
-          },
-          {
-            "type": "command",
-            "command": ".claude/hooks/enforce-sequential-dispatch.sh"
-          },
-          {
-            "type": "command",
-            "command": ".claude/hooks/remind-inprogress.sh"
-          },
-          {
-            "type": "command",
-            "command": ".claude/hooks/inject-discipline-reminder.sh"
-          },
-          {
-            "type": "command",
-            "command": ".claude/hooks/inject-memory-recall.sh"
+            "command": "node .claude/hooks/dispatch-guard.cjs"
           }
         ]
       },
       {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/validate-epic-close.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/enforce-branch-before-edit.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/enforce-branch-before-edit.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node .claude/hooks/enforce-branch-before-edit.cjs"
-          }
-        ]
-      },
-      {
-        "matcher": "Write",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
@@ -91,25 +31,6 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/enforce-concise-response.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/memory-capture.sh",
-            "timeout": 10
-          }
-        ]
-      },
-      {
         "matcher": "Bash",
         "hooks": [
           {
@@ -125,14 +46,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/validate-completion.sh"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
             "command": "node .claude/hooks/validate-completion.cjs"
           }
         ]
@@ -143,25 +56,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/session-start.sh"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
             "command": "node .claude/hooks/session-start.cjs"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": ".claude/hooks/clarify-vague-request.sh"
           }
         ]
       }
