@@ -119,6 +119,12 @@ Single binary — frontend is embedded via rust-embed. No npm publish needed.
 - Users download binary from GitHub Releases, run it, open http://localhost:3007
 - `npm run dev` (port 3007) works out of the box — `next.config.js` enables `output: 'export'` only for production builds, and in dev it proxies `/api/*` to the running backend (`BEADS_API_PORT`, default 3056). UI changes are visible instantly against live Dolt data, no binary rebuild needed.
 
+## Configuration
+
+**Every setting is resolved in exactly one place: `server/src/config.rs`.** Dolt password (env → `%APPDATA%\beads\credentials` → legacy `.dolt.env`/`.beads/.env`), `bd.exe` path (incl. the winget package folder that never reaches PATH), server `PORT` — all inside the process.
+
+Launchers (`pm2.config.cjs`, `scripts/start-direct-dolt.ps1`, CI, future docker/systemd) MUST NOT read config files or hunt for binaries — they only pass explicit overrides (`PORT`, Dolt host/port/user) as env. A new setting goes into `config.rs`, never into a wrapper: the invariant is that the binary starts with a completely empty environment.
+
 ## Git Notes
 
 - Upstream remote removed — fully independent from original repo
