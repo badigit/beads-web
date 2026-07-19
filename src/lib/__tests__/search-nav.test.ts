@@ -52,12 +52,14 @@ describe('nextResultIndex', () => {
 });
 
 describe('searchResultHref', () => {
-  it('builds a project link from project_id', () => {
-    expect(searchResultHref(result())).toBe('/project?id=a1b2c3d4');
+  it('builds a link straight to the bead, not just the board', () => {
+    expect(searchResultHref(result())).toBe('/project?id=a1b2c3d4&bead=bweb-489.12.2');
   });
 
   it('encodes ids that need escaping', () => {
-    expect(searchResultHref(result({ project_id: 'a b&c' }))).toBe('/project?id=a%20b%26c');
+    expect(searchResultHref(result({ project_id: 'a b&c', bead_id: 'x y' }))).toBe(
+      '/project?id=a%20b%26c&bead=x%20y'
+    );
   });
 
   it('returns null when the project is not registered locally', () => {

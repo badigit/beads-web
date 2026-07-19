@@ -34,7 +34,9 @@ import { useKeyboardNavigation } from "@/hooks/use-keyboard-navigation";
 import { usePRSettings } from "@/hooks/use-pr-settings";
 import { useProject } from "@/hooks/use-project";
 import { useTheme } from "@/hooks/use-theme";
+import { toast } from "@/hooks/use-toast";
 import { useWorktreeStatuses } from "@/hooks/use-worktree-statuses";
+import { buildProjectUrl, parseBeadIdParam } from "@/lib/bead-link";
 import { isBlocked } from "@/lib/bead-utils";
 import { getUnknownStatusBeads, getUnknownStatusNames } from "@/lib/beads-parser";
 import { isDoltProject } from "@/lib/utils";
@@ -63,6 +65,7 @@ export default function KanbanBoard() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const projectId = searchParams.get('id');
+  const beadIdParam = parseBeadIdParam(searchParams);
 
   // Fetch project data from SQLite
   const {
@@ -214,6 +217,45 @@ export default function KanbanBoard() {
     handleDetailOpenChange,
     navigateToBead,
   } = useBeadDetail(beads);
+
+  // One-shot flag: has the `?bead=` URL param (if any) already been resolved
+  // against the loaded beads? Starts `true` when there's no param to resolve.
+  // Gates the URL-sync effect below so it doesn't strip `?bead=` off the
+  // address bar before the deep link below has had a chance to open it.
+  const [urlBeadResolved, setUrlBeadResolved] = useState(() => !beadIdParam);
+
+  // Deep link: open the bead named by `?bead=` once beads have loaded, even
+  // if current filters would hide it from the board (`beads` here is the
+  // full unfiltered list). Shows a toast instead of a blank screen when the
+  // id doesn't resolve — closed, filtered by data, or from another project
+  // all look the same from here: "not in this project's bead list".
+  useEffect(() => {
+    if (urlBeadResolved) return;
+    if (beadsLoading) return;
+    const found = beads.find((b) => b.id === beadIdParam);
+    if (found) {
+      openBead(found);
+    } else {
+      toast({
+        variant: "destructive",
+        title: "Bead not found",
+        description: `"${beadIdParam}" isn't in this project — it may be closed, moved, or the link may be wrong.`,
+      });
+    }
+    setUrlBeadResolved(true);
+  }, [urlBeadResolved, beadIdParam, beadsLoading, beads, openBead]);
+
+  // Keep the URL in sync with the open detail bead (`?bead=<id>` while open,
+  // stripped when closed). Uses replaceState (via router.replace) so opening
+  // cards doesn't pile up Back-button history entries.
+  useEffect(() => {
+    if (!urlBeadResolved || !projectId) return;
+    const nextUrl = buildProjectUrl(projectId, detailBead?.id ?? null);
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    if (nextUrl !== currentUrl) {
+      router.replace(nextUrl, { scroll: false });
+    }
+  }, [urlBeadResolved, detailBead?.id, projectId, router]);
 
   // Ref for search input (keyboard navigation)
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -418,6 +460,7 @@ export default function KanbanBoard() {
           open={isDetailOpen}
           onOpenChange={handleDetailOpenChange}
           projectPath={project?.path ?? ""}
+          projectId={projectId}
           allBeads={beads}
           onChildClick={openBead}
           onUpdate={refreshBeads}

@@ -6,6 +6,7 @@
  */
 
 import type { SearchResult } from '@/lib/api';
+import { buildProjectUrl } from '@/lib/bead-link';
 
 /**
  * Minimal shape of a keyboard event needed to decide on the shortcut.
@@ -33,18 +34,19 @@ export function nextResultIndex(current: number, total: number, direction: 1 | -
 }
 
 /**
- * Builds the project route for a hit, or `null` when the Dolt database is not
- * registered as a local project (nothing to navigate to).
+ * Builds the route for a hit — straight to the specific bead's detail card,
+ * not just the board — or `null` when the Dolt database is not registered as
+ * a local project (nothing to navigate to).
  */
-export function searchResultHref(result: Pick<SearchResult, 'project_id'>): string | null {
+export function searchResultHref(result: Pick<SearchResult, 'project_id' | 'bead_id'>): string | null {
   if (!result.project_id) return null;
-  return `/project?id=${encodeURIComponent(result.project_id)}`;
+  return buildProjectUrl(result.project_id, result.bead_id);
 }
 
 /**
  * Whether a hit can be opened — i.e. it maps to a local project.
  */
-export function isSearchResultNavigable(result: Pick<SearchResult, 'project_id'>): boolean {
+export function isSearchResultNavigable(result: Pick<SearchResult, 'project_id' | 'bead_id'>): boolean {
   return searchResultHref(result) !== null;
 }
 
