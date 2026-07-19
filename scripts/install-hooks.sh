@@ -12,6 +12,23 @@
 
 set -euo pipefail
 
+# ── Worktrees: nothing to install ─────────────────────────────────────
+# A worktree's .git is a FILE ("gitdir: <path>"), not a directory. Its hooks
+# live in the main repository's .git/hooks and are written by that checkout's
+# own `npm install`, so there is genuinely nothing to do here.
+#
+# The check is deliberately git-free. `npm ci` inside a worktree invokes this
+# script through whichever `bash` is first on PATH — on Windows that is WSL's,
+# whose git reads the Windows-absolute path out of the .git file and resolves it
+# relative to the WSL cwd:
+#   fatal: not a git repository: /mnt/c/.../worktree/C:/.../.git/worktrees/...
+# Under `set -e` that aborted `npm ci` with exit 128 (bweb-g80).
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/../.git" ]; then
+  echo "install-hooks: worktree detected — hooks live in the main repository, nothing to do"
+  exit 0
+fi
+
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
 # ── bd config: disable auto git-add (bd-beads-web-b9c) ────────────────
