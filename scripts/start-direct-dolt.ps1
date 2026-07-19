@@ -6,72 +6,30 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $binary = Join-Path $repoRoot "bin\beads-web-win-x64-direct.exe"
-$outLog = Join-Path $repoRoot "server\target\direct-dolt-$Port.out.log"
-$errLog = Join-Path $repoRoot "server\target\direct-dolt-$Port.err.log"
+$logDir = Join-Path $repoRoot "server\target"
+$outLog = Join-Path $logDir "direct-dolt-$Port.out.log"
+$errLog = Join-Path $logDir "direct-dolt-$Port.err.log"
+
+# server\target is the cargo output dir, and since the switch to a shared
+# CARGO_TARGET_DIR it no longer exists inside git worktrees -- Start-Process
+# would fail on the redirect before the server ever starts.
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
 if (-not (Test-Path -LiteralPath $binary)) {
   throw "Direct Dolt binary not found: $binary. Run scripts\build-windows-direct.ps1 first."
 }
 
-# The server resolves the bd CLI with `where bd` and spawns the first hit, so a real
-# bd.exe must be on PATH -- shell shims (bd, bd.cmd, bd.ps1) are not spawnable by the
-# server even though `Get-Command bd` resolves them.
-if (-not (Get-Command "bd.exe" -ErrorAction SilentlyContinue)) {
-  # built by interpolation, not Join-Path: Join-Path resolves the drive qualifier and
-  # would throw under $ErrorActionPreference = "Stop" if the root were unavailable.
-  $wingetPackages = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages"
-  $bdCandidateDirs = @()
-
-  # winget installs bd into the package folder itself (no alias in WinGet\Links),
-  # and the folder suffix changes on reinstall -- match by prefix.
-  if (Test-Path -LiteralPath $wingetPackages) {
-    $bdCandidateDirs += @(
-      Get-ChildItem -LiteralPath $wingetPackages -Directory -Filter "GasTownHall.Beads_*" -ErrorAction SilentlyContinue |
-        Sort-Object Name |
-        Select-Object -ExpandProperty FullName
-    )
-  }
-
-  # historical `go install` location, kept as a fallback
-  $bdCandidateDirs += "$env:USERPROFILE\go\bin"
-
-  $bdDir = $bdCandidateDirs |
-    Where-Object { Test-Path -LiteralPath "$_\bd.exe" } |
-    Select-Object -First 1
-
-  if ($bdDir) {
-    $env:PATH = "$bdDir;$env:PATH"
-  } else {
-    Write-Warning "bd.exe not found (checked PATH, $wingetPackages\GasTownHall.Beads_*, and $env:USERPROFILE\go\bin). Direct Dolt will still work, but the beads-web CLI fallback will be unavailable."
-  }
-}
-
+# Configuration is NOT resolved here. The binary finds the Dolt password and the
+# bd CLI itself (server/src/config.rs): password -- env -> %APPDATA%\beads\credentials
+# (section host:port) -> legacy .dolt.env / .beads\.env; bd.exe -- including the winget
+# package folder that never reaches PATH. If something cannot be resolved the server
+# says so in its own log ($errLog). Only explicit overrides belong here: the port and
+# the Dolt server address. Do not add file reading or binary lookup back -- a new
+# setting is resolved ONLY in config.rs (see CLAUDE.md).
 $env:PORT = "$Port"
 $env:BEADS_DOLT_SERVER_HOST = "10.9.0.105"
 $env:BEADS_DOLT_SERVER_PORT = "3307"
 $env:BEADS_DOLT_SERVER_USER = "beads"
-
-if (-not $env:BEADS_DOLT_PASSWORD) {
-  $passwordSources = @(
-    (Join-Path $repoRoot ".dolt.env"),
-    (Join-Path $repoRoot ".beads\.env"),
-    (Join-Path $ProjectRoot "trade-vp1\.beads\.env")
-  )
-  foreach ($source in $passwordSources) {
-    if (-not (Test-Path -LiteralPath $source)) { continue }
-    foreach ($line in Get-Content -LiteralPath $source) {
-      if ($line -match '^BEADS_DOLT_PASSWORD=(.+)$') {
-        $env:BEADS_DOLT_PASSWORD = $Matches[1].Trim()
-        break
-      }
-    }
-    if ($env:BEADS_DOLT_PASSWORD) { break }
-  }
-}
-
-if (-not $env:BEADS_DOLT_PASSWORD) {
-  throw "BEADS_DOLT_PASSWORD was not found. Create $repoRoot\.dolt.env."
-}
 
 Get-Process -Name "beads-web-win-x64", "beads-web-win-x64-direct", "beads-server" -ErrorAction SilentlyContinue |
   Stop-Process -Force -ErrorAction SilentlyContinue
