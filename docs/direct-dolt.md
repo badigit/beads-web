@@ -30,6 +30,8 @@ The dev server proxies `/api/*` to the running backend (`BEADS_API_PORT`, defaul
 
 The launcher registers local repositories containing `.beads\metadata.json`. Local project paths retain CLI, Git, worktree, and editor actions while issue reads use central Dolt SQL.
 
+Cleanup before start is scoped to `-Port` by default (only the process actually listening on it is stopped). Pass `-KillAll` to additionally kill every `beads-web-win-x64*`/`beads-server` process on the machine by name, regardless of port — only needed to clear a stuck instance that isn't listening on any port. Do not use this routinely: it can kill unrelated running instances (e.g. a pm2-managed instance on a different port).
+
 ## Verification
 
 ```powershell
