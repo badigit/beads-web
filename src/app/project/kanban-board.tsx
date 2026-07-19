@@ -39,6 +39,7 @@ import { useWorktreeStatuses } from "@/hooks/use-worktree-statuses";
 import { buildProjectUrl, parseBeadIdParam } from "@/lib/bead-link";
 import { isBlocked } from "@/lib/bead-utils";
 import { getUnknownStatusBeads, getUnknownStatusNames } from "@/lib/beads-parser";
+import { isFlatSearchMode, selectBoardBeads, type IssueTypeFilter } from "@/lib/board-beads";
 import { isDoltProject } from "@/lib/utils";
 import type { Bead, BeadStatus } from "@/types";
 
@@ -52,11 +53,6 @@ const COLUMNS: { status: BeadStatus; title: string }[] = [
   { status: "inreview", title: "In Review" },
   { status: "closed", title: "Closed" },
 ];
-
-/**
- * Issue type filter options
- */
-type IssueTypeFilter = "all" | "epics" | "tasks";
 
 /**
  * Main Kanban board component with 4 columns, search, filter, and keyboard navigation
@@ -93,6 +89,7 @@ export default function KanbanBoard() {
     clearFilters,
     hasActiveFilters,
     availableOwners,
+    debouncedSearch,
   } = useBeadFilters(beads, ticketNumbers, 300);
 
   // Issue type filter state (epics vs tasks)
@@ -169,21 +166,20 @@ export default function KanbanBoard() {
     worktreeEnabled ? beadIds : []
   );
 
+  // Flat search mode: while a search is active, matches at any depth get their
+  // own card (see selectBoardBeads). Keyed off the debounced term so the mode
+  // flips in sync with the filtering itself, not with the raw input.
+  const flatSearch = isFlatSearchMode(debouncedSearch);
+
   /**
-   * Filter to only top-level beads (no parent_id)
-   * Then apply issue type filter (epics vs tasks)
-   * Child tasks should not appear in columns - they appear inside epic cards
+   * Beads that get their own card on the board.
+   * No search -> top-level only (children live inside epic cards).
+   * Active search -> every match, at any depth (bweb-emj).
    */
-  const topLevelBeads = useMemo(() => {
-    const topLevel = filteredBeads.filter(b => !b.parent_id);
-
-    // Apply issue type filter
-    if (typeFilter === "all") return topLevel;
-    if (typeFilter === "epics") return topLevel.filter(b => b.issue_type === "epic");
-    if (typeFilter === "tasks") return topLevel.filter(b => b.issue_type !== "epic");
-
-    return topLevel;
-  }, [filteredBeads, typeFilter]);
+  const topLevelBeads = useMemo(
+    () => selectBoardBeads(filteredBeads, typeFilter, debouncedSearch),
+    [filteredBeads, typeFilter, debouncedSearch]
+  );
 
   /**
    * Group top-level beads by status for columns.
@@ -444,6 +440,7 @@ export default function KanbanBoard() {
                 onNavigateToDependency={navigateToBead}
                 projectPath={project?.path}
                 onUpdate={refreshBeads}
+                showParentBreadcrumb={flatSearch}
               />
             ))}
           </div>
