@@ -497,9 +497,16 @@ pub struct SearchRow {
     pub status: String,
 }
 
-/// Like [`validate_database_name`], but also accepts `-`, which occurs in
-/// discovered database names such as `beads_ai-photo-factory`.
-fn validate_discovered_database_name(db_name: &str) -> Result<(), DoltError> {
+/// Rejects any database name that is not a bare identifier.
+///
+/// Names reach SQL only inside the backticks of ``USE `{}` ``, so the character
+/// that must never get through is the backtick itself; `-` is inert there and is
+/// allowed because discovery surfaces hyphenated databases such as
+/// `beads_ai-photo-factory`. Keeping one validator for both discovered and
+/// caller-supplied names is deliberate — the split version rejected `-` on the
+/// `read_beads` / `issue_prefix` paths while allowing it on the search path,
+/// which broke those paths for hyphenated databases (bweb-489.14).
+fn validate_database_name(db_name: &str) -> Result<(), DoltError> {
     if db_name.is_empty()
         || !db_name
             .chars()
@@ -510,15 +517,10 @@ fn validate_discovered_database_name(db_name: &str) -> Result<(), DoltError> {
     Ok(())
 }
 
-fn validate_database_name(db_name: &str) -> Result<(), DoltError> {
-    if db_name.is_empty()
-        || !db_name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-    {
-        return Err(DoltError::DatabaseNotFound(db_name.to_string()));
-    }
-    Ok(())
+/// Retained as the discovery-path spelling of [`validate_database_name`], which
+/// now applies the same rules to every caller.
+fn validate_discovered_database_name(db_name: &str) -> Result<(), DoltError> {
+    validate_database_name(db_name)
 }
 
 /// Reads beads from a Dolt server on a specific port.
@@ -1233,6 +1235,25 @@ mod tests {
         assert!(validate_database_name("_my_llm_skills_agents").is_ok());
         assert!(validate_database_name("tvp`; DROP DATABASE tvp; --").is_err());
         assert!(validate_database_name("").is_err());
+    }
+
+    #[test]
+    fn test_database_name_allows_hyphen() {
+        // Discovery surfaces hyphenated databases (`beads_ai-photo-factory`), and
+        // read_beads/issue_prefix run the same name through this validator —
+        // rejecting `-` here made those paths fail on such a database (bweb-489.14).
+        assert!(validate_database_name("beads_ai-photo-factory").is_ok());
+        assert!(validate_database_name("a-b-c").is_ok());
+    }
+
+    #[test]
+    fn test_database_name_rejects_injection_attempts() {
+        // A hyphen is inert inside the backticks of USE `{}`; a backtick is not,
+        // so it must stay rejected even though `-` is now allowed.
+        assert!(validate_database_name("tvp`; DROP DATABASE tvp; --").is_err());
+        assert!(validate_database_name("a b").is_err());
+        assert!(validate_database_name("a;b").is_err());
+        assert!(validate_database_name("a/b").is_err());
     }
 
     #[test]
