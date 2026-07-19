@@ -15,13 +15,16 @@ interface CopyableTextProps {
 }
 
 /**
- * Inline text that copies to clipboard on click.
+ * Inline text that copies to clipboard on click or Enter/Space.
  * Shows a checkmark + "Copied" for 2 seconds after copying.
+ *
+ * Events are stopped from propagating: these live inside clickable cards,
+ * where bubbling would open the detail panel instead of copying.
  */
 export function CopyableText({ children, copyText, className }: CopyableTextProps) {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = useCallback(async (e: React.MouseEvent) => {
+  const handleCopy = useCallback(async (e: React.MouseEvent | React.KeyboardEvent) => {
     e.stopPropagation();
     try {
       await navigator.clipboard.writeText(copyText);
@@ -31,6 +34,12 @@ export function CopyableText({ children, copyText, className }: CopyableTextProp
       // Fallback for insecure contexts
     }
   }, [copyText]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    handleCopy(e);
+  }, [handleCopy]);
 
   if (copied) {
     return (
@@ -43,8 +52,16 @@ export function CopyableText({ children, copyText, className }: CopyableTextProp
 
   return (
     <span
+      role="button"
+      tabIndex={0}
+      aria-label={`Copy ${copyText}`}
       onClick={handleCopy}
-      className={cn("cursor-copy hover:text-t-secondary transition-colors", className)}
+      onKeyDown={handleKeyDown}
+      className={cn(
+        "cursor-copy hover:text-t-secondary transition-colors",
+        "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm",
+        className
+      )}
       title={`Click to copy: ${copyText}`}
     >
       {children}
