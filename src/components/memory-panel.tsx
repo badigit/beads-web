@@ -89,23 +89,6 @@ function formatRelativeTime(ts: number): string {
 }
 
 /**
- * Format a memory entry's bead ID to a short display form.
- * Handles IDs like "beads-kanban-ui-t25.2" -> "BD-t25.2"
- * or "project-p02" -> "BD-p02"
- */
-function formatMemoryBeadId(id: string): string {
-  if (id.startsWith("BD-") || id.startsWith("bd-")) {
-    return id.length > 10 ? `BD-${id.slice(-6)}` : id.toUpperCase();
-  }
-  // Extract the part after the last hyphen (handles dots for epic children)
-  const lastDash = id.lastIndexOf("-");
-  if (lastDash !== -1) {
-    return `BD-${id.slice(lastDash + 1)}`;
-  }
-  return `BD-${id.slice(0, 6)}`;
-}
-
-/**
  * Single memory entry card
  */
 function MemoryEntryCard({
@@ -183,7 +166,7 @@ function MemoryEntryCard({
               title={entry.bead}
               aria-label={`Navigate to bead ${entry.bead}`}
             >
-              {formatMemoryBeadId(entry.bead)}
+              {entry.bead}
             </button>
           )}
 

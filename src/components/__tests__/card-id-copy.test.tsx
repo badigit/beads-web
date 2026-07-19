@@ -26,20 +26,24 @@ const BEAD: Bead = {
   comments: [],
 };
 
-/** Displayed short form of BEAD.id — the element the user clicks. */
-const SHORT_ID = 'BD-0wk';
+/**
+ * Displayed id — must be the real bead id, byte for byte. The card no
+ * longer substitutes a hardcoded "BD-" prefix (bweb-276): screen and
+ * clipboard must agree on the same string.
+ */
+const DISPLAYED_ID = BEAD.id;
 
 /**
  * Render a BeadCard under the theme that selects `layout`.
  * Theme is read from localStorage by useTheme, so no provider is needed.
  */
-function renderCard(themeId: string) {
+function renderCard(themeId: string, bead: Bead = BEAD) {
   const onSelect = vi.fn();
   localStorage.setItem('beads-theme', themeId);
   render(
-    <BeadCard bead={BEAD} allBeads={[BEAD]} ticketNumber={35} onSelect={onSelect} />
+    <BeadCard bead={bead} allBeads={[bead]} ticketNumber={35} onSelect={onSelect} />
   );
-  return { onSelect, id: screen.getByText(SHORT_ID) };
+  return { onSelect, id: screen.getByText(bead.id) };
 }
 
 /**
@@ -110,5 +114,35 @@ describe('clicking the bead ID on a kanban card', () => {
     await fireAndSettle(() => fireEvent.click(screen.getByText('#35')));
 
     expect(writeText).toHaveBeenCalledWith('#35');
+  });
+});
+
+describe('displayed bead id matches the real id (no "BD-" substitution)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it.each(LAYOUTS)('shows the full real id in %s layout', (_layout, themeId) => {
+    renderCard(themeId);
+
+    expect(screen.getByText(DISPLAYED_ID)).toBeInTheDocument();
+    expect(screen.queryByText(/^BD-/)).not.toBeInTheDocument();
+  });
+
+  it.each(LAYOUTS)('shows the full id for other project prefixes in %s layout, not a hardcoded "BD-"', (_layout, themeId) => {
+    const otherProjectBead: Bead = { ...BEAD, id: 'config_parser-9' };
+
+    renderCard(themeId, otherProjectBead);
+
+    expect(screen.getByText('config_parser-9')).toBeInTheDocument();
+    expect(screen.queryByText(/^BD-/)).not.toBeInTheDocument();
+  });
+
+  it.each(LAYOUTS)('shows the full id for a dotted subtask id in %s layout', (_layout, themeId) => {
+    const subtaskBead: Bead = { ...BEAD, id: 'bweb-1ey.2' };
+
+    renderCard(themeId, subtaskBead);
+
+    expect(screen.getByText('bweb-1ey.2')).toBeInTheDocument();
   });
 });

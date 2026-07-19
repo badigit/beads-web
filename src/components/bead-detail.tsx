@@ -26,7 +26,6 @@ import { usePRSettings } from "@/hooks/use-pr-settings";
 import { toast } from "@/hooks/use-toast";
 import * as api from "@/lib/api";
 import {
-  formatBeadId,
   formatShortDate,
   formatStatus,
   formatWorktreePath,
@@ -241,8 +240,8 @@ export function BeadDetail({
                 </CopyableText>
               )}
               {ticketNumber !== undefined && " "}
-              <CopyableText copyText={bead.id}>
-                {formatBeadId(bead.id, 8)}
+              <CopyableText copyText={bead.id} className="inline-block max-w-[200px] truncate align-bottom">
+                {bead.id}
               </CopyableText>
             </p>
 
@@ -355,8 +354,8 @@ export function BeadDetail({
                         className={cn("size-2 flex-shrink-0 fill-current", getStatusDotColor(related.status))}
                         aria-hidden="true"
                       />
-                      <span className="text-[10px] font-mono text-t-muted flex-shrink-0">
-                        {formatBeadId(related.id)}
+                      <span className="text-[10px] font-mono text-t-muted flex-shrink-0 max-w-[100px] truncate">
+                        {related.id}
                       </span>
                       <span className={cn(
                         "text-xs font-medium flex-1 min-w-0 truncate group-hover:underline",
@@ -411,7 +410,7 @@ export function BeadDetail({
               <h3 className="text-sm font-semibold mb-3 text-t-secondary">Design Document</h3>
               <DesignDocViewer
                 designDocPath={bead.design_doc!}
-                epicId={formatBeadId(bead.id)}
+                epicId={bead.id}
                 projectPath={projectPath}
                 onFullScreenChange={handleFullScreenChange}
               />

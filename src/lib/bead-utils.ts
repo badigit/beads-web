@@ -8,20 +8,6 @@
 import type { BeadStatus } from "@/types";
 
 /**
- * Format bead ID for display.
- * @param id - Raw bead ID (e.g., "beads-kanban-ui-jkk.1" or "BD-abc123")
- * @param maxLen - Max chars for the short ID portion (6 for cards, 8 for detail)
- */
-export function formatBeadId(id: string, maxLen = 6): string {
-  if (id.startsWith("BD-") || id.startsWith("bd-")) {
-    return id.length > maxLen + 3 ? `BD-${id.slice(-maxLen)}` : id.toUpperCase();
-  }
-  const parts = id.split("-");
-  const shortId = parts[parts.length - 1];
-  return `BD-${shortId.slice(0, maxLen)}`;
-}
-
-/**
  * Format status for display (e.g., "in_progress" -> "In Progress")
  */
 export function formatStatus(status: BeadStatus): string {
