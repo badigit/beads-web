@@ -208,10 +208,12 @@ async fn main() {
         .route(
             "/api/memory",
             get(routes::memory::list_memory)
+                .post(routes::memory::create_memory)
                 .put(routes::memory::update_memory)
                 .delete(routes::memory::delete_memory),
         )
         .route("/api/memory/stats", get(routes::memory::memory_stats))
+        .route("/api/memory/entry", get(routes::memory::get_memory))
         .route("/api/watch/beads", get(routes::watch_beads))
         .route("/api/version/check", get(routes::version::version_check))
         .route("/api/update", post(routes::version::perform_update))

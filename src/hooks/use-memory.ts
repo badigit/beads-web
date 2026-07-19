@@ -1,20 +1,22 @@
 "use client";
 
 /**
- * Hook for loading and managing memory entries (knowledge base).
+ * Hook for loading and managing a project's bd memories.
  *
- * Fetches from GET /api/memory and provides search, filter,
- * edit, archive, and delete capabilities.
+ * Backed by `bd remember` / `bd memories` / `bd recall` / `bd forget` via
+ * `/api/memory`. Memories live in the project's Dolt database and are injected
+ * into agent sessions at `bd prime`, so anything created here is immediately
+ * visible to `bd memories` on the command line, and vice versa.
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 
 import * as api from "@/lib/api";
 import { isDoltProject } from "@/lib/utils";
-import type { MemoryEntry, MemoryStats, MemoryType } from "@/types";
+import type { MemoryEntry, MemoryStats } from "@/types";
 
 export interface UseMemoryResult {
-  /** All memory entries from the project */
+  /** All memory entries for the project */
   entries: MemoryEntry[];
   /** Aggregate stats */
   stats: MemoryStats | null;
@@ -26,34 +28,28 @@ export interface UseMemoryResult {
   search: string;
   /** Set search query */
   setSearch: (value: string) => void;
-  /** Current type filter (null = all) */
-  typeFilter: MemoryType | null;
-  /** Set type filter */
-  setTypeFilter: (value: MemoryType | null) => void;
-  /** Entries filtered by search and type */
+  /** Entries filtered by the search query */
   filteredEntries: MemoryEntry[];
-  /** Edit an entry's content and/or tags */
-  editEntry: (key: string, content?: string, tags?: string[]) => Promise<void>;
-  /** Archive an entry (move to archive file) */
-  archiveEntry: (key: string) => Promise<void>;
-  /** Permanently delete an entry */
+  /** Create a new memory */
+  createEntry: (key: string, content: string) => Promise<void>;
+  /** Replace an existing memory's content */
+  editEntry: (key: string, content: string) => Promise<void>;
+  /** Permanently delete a memory */
   deleteEntry: (key: string) => Promise<void>;
   /** Manually refresh entries */
   refresh: () => Promise<void>;
 }
 
-const EMPTY_STATS: MemoryStats = {
-  total: 0,
-  learned: 0,
-  investigation: 0,
-  archived: 0,
-};
+const EMPTY_STATS: MemoryStats = { total: 0 };
 
 /**
- * Hook to load and manage memory entries from a project's knowledge base.
+ * Hook to load and manage a project's bd memories.
+ *
+ * Searching is done client-side over the already-loaded entries so that typing
+ * stays responsive and does not spawn a bd process per keystroke.
  *
  * @param projectPath - The absolute path to the project root
- * @returns Object containing entries, stats, filters, mutations, and refresh
+ * @returns Object containing entries, stats, search, mutations, and refresh
  */
 export function useMemory(projectPath: string): UseMemoryResult {
   const [entries, setEntries] = useState<MemoryEntry[]>([]);
@@ -61,13 +57,15 @@ export function useMemory(projectPath: string): UseMemoryResult {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState<MemoryType | null>(null);
 
   // Track if initial load has completed
   const hasLoadedRef = useRef(false);
 
   /**
-   * Load memory entries from the API
+   * Load memory entries from the API.
+   *
+   * `dolt://` projects have no filesystem path for bd to run in, so they are
+   * skipped rather than producing a confusing error.
    */
   const loadMemory = useCallback(async () => {
     if (!projectPath || isDoltProject(projectPath)) {
@@ -111,39 +109,45 @@ export function useMemory(projectPath: string): UseMemoryResult {
   }, [loadMemory]);
 
   /**
-   * Filter entries by search query and type
+   * Filter entries by the search query (key or content)
    */
   const filteredEntries = useMemo(() => {
-    let result = entries;
+    const query = search.trim().toLowerCase();
+    if (!query) return entries;
 
-    // Apply type filter
-    if (typeFilter) {
-      result = result.filter((e) => e.type === typeFilter);
-    }
-
-    // Apply search filter
-    if (search.trim()) {
-      const query = search.toLowerCase();
-      result = result.filter(
-        (e) =>
-          e.content.toLowerCase().includes(query) ||
-          e.key.toLowerCase().includes(query) ||
-          e.tags.some((t) => t.toLowerCase().includes(query)) ||
-          e.bead.toLowerCase().includes(query)
-      );
-    }
-
-    return result;
-  }, [entries, search, typeFilter]);
+    return entries.filter(
+      (e) =>
+        e.content.toLowerCase().includes(query) ||
+        e.key.toLowerCase().includes(query)
+    );
+  }, [entries, search]);
 
   /**
-   * Edit an entry's content and/or tags
+   * Create a new memory
    */
-  const editEntry = useCallback(
-    async (key: string, content?: string, tags?: string[]) => {
+  const createEntry = useCallback(
+    async (key: string, content: string) => {
       if (!projectPath) return;
       try {
-        await api.memory.update(projectPath, key, content, tags);
+        await api.memory.create(projectPath, key, content);
+        await loadMemory();
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        console.error("Failed to create memory entry:", error);
+        throw error;
+      }
+    },
+    [projectPath, loadMemory]
+  );
+
+  /**
+   * Replace an existing memory's content
+   */
+  const editEntry = useCallback(
+    async (key: string, content: string) => {
+      if (!projectPath) return;
+      try {
+        await api.memory.update(projectPath, key, content);
         await loadMemory();
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
@@ -155,31 +159,13 @@ export function useMemory(projectPath: string): UseMemoryResult {
   );
 
   /**
-   * Archive an entry
-   */
-  const archiveEntry = useCallback(
-    async (key: string) => {
-      if (!projectPath) return;
-      try {
-        await api.memory.remove(projectPath, key, true);
-        await loadMemory();
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
-        console.error("Failed to archive memory entry:", error);
-        throw error;
-      }
-    },
-    [projectPath, loadMemory]
-  );
-
-  /**
-   * Permanently delete an entry
+   * Permanently delete a memory
    */
   const deleteEntry = useCallback(
     async (key: string) => {
       if (!projectPath) return;
       try {
-        await api.memory.remove(projectPath, key, false);
+        await api.memory.remove(projectPath, key);
         await loadMemory();
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
@@ -197,11 +183,9 @@ export function useMemory(projectPath: string): UseMemoryResult {
     error,
     search,
     setSearch,
-    typeFilter,
-    setTypeFilter,
     filteredEntries,
+    createEntry,
     editEntry,
-    archiveEntry,
     deleteEntry,
     refresh,
   };

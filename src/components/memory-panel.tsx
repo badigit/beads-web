@@ -1,17 +1,15 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 import {
   BrainCircuit,
   Pencil,
-  Tag,
-  ExternalLink,
-  Archive,
   Trash2,
   Search,
   MoreVertical,
   X,
+  Plus,
   Loader2,
 } from "lucide-react";
 
@@ -24,7 +22,6 @@ import {
   AlertDialogTitle,
   AlertDialogClose,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -43,10 +40,8 @@ import {
   SheetDescription,
   SheetFooter,
 } from "@/components/ui/sheet";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMemory } from "@/hooks/use-memory";
-import { cn } from "@/lib/utils";
-import type { MemoryEntry, MemoryType } from "@/types";
+import type { MemoryEntry } from "@/types";
 
 export interface MemoryPanelProps {
   /** Whether the panel is open */
@@ -55,37 +50,21 @@ export interface MemoryPanelProps {
   onOpenChange: (open: boolean) => void;
   /** Absolute path to the project root */
   projectPath: string;
-  /** Callback to navigate to a bead by ID */
-  onNavigateToBead?: (beadId: string) => void;
 }
 
-type TabFilter = "all" | "learned" | "investigation";
+/** Mirrors the server-side key validation in `server/src/routes/memory.rs`. */
+const KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /**
- * Format a unix timestamp to a relative time string
+ * Validate a memory key client-side so the error appears next to the field
+ * rather than arriving as a failed request.
  */
-function formatRelativeTime(ts: number): string {
-  const now = Date.now() / 1000;
-  const diff = now - ts;
-
-  if (diff < 60) return "just now";
-  if (diff < 3600) {
-    const mins = Math.floor(diff / 60);
-    return `${mins}m ago`;
+function validateKey(key: string): string | null {
+  if (!key.trim()) return "Key is required";
+  if (!KEY_PATTERN.test(key.trim())) {
+    return "Use letters, digits, '-', '_' and '.' only";
   }
-  if (diff < 86400) {
-    const hours = Math.floor(diff / 3600);
-    return `${hours}h ago`;
-  }
-  if (diff < 604800) {
-    const days = Math.floor(diff / 86400);
-    return `${days}d ago`;
-  }
-  const date = new Date(ts * 1000);
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
+  return null;
 }
 
 /**
@@ -94,150 +73,72 @@ function formatRelativeTime(ts: number): string {
 function MemoryEntryCard({
   entry,
   onEdit,
-  onArchive,
   onDelete,
-  onNavigate,
 }: {
   entry: MemoryEntry;
   onEdit: (entry: MemoryEntry) => void;
-  onArchive: (key: string) => void;
   onDelete: (key: string) => void;
-  onNavigate?: (beadId: string) => void;
 }) {
   return (
     <div className="rounded-lg border border-b-default bg-surface-raised/50 p-3 space-y-2 overflow-hidden">
-      {/* Top row: type badge, timestamp */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          {entry.type === "learned" ? (
-            <Badge variant="info" appearance="light" size="xs">
-              LEARN
-            </Badge>
-          ) : (
-            <Badge variant="success" appearance="light" size="xs">
-              INVES
-            </Badge>
-          )}
-        </div>
-        <time
-          dateTime={new Date(entry.ts * 1000).toISOString()}
-          className="text-xs text-t-faint shrink-0 tabular-nums"
-          suppressHydrationWarning
+      {/* Top row: key, actions menu */}
+      <div className="flex items-start justify-between gap-2">
+        <code
+          className="text-xs font-mono text-t-muted truncate min-w-0"
+          title={entry.key}
         >
-          {formatRelativeTime(entry.ts)}
-        </time>
+          {entry.key}
+        </code>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="size-6 shrink-0 flex items-center justify-center rounded text-t-muted hover:text-t-secondary hover:bg-surface-overlay transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              aria-label={`Actions for memory ${entry.key}`}
+            >
+              <MoreVertical className="size-3.5" aria-hidden="true" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className="bg-surface-raised border-b-default"
+          >
+            <DropdownMenuItem
+              onClick={() => onEdit(entry)}
+              className="text-t-secondary focus:bg-surface-overlay focus:text-t-primary gap-2"
+            >
+              <Pencil className="size-3.5" aria-hidden="true" />
+              Edit content
+            </DropdownMenuItem>
+            <DropdownMenuSeparator className="bg-surface-overlay" />
+            <DropdownMenuItem
+              onClick={() => onDelete(entry.key)}
+              className="text-danger focus:bg-surface-overlay focus:text-danger gap-2"
+            >
+              <Trash2 className="size-3.5" aria-hidden="true" />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Content preview */}
-      <p className="text-sm text-t-secondary line-clamp-3 text-pretty">
+      <p className="text-sm text-t-secondary line-clamp-4 text-pretty whitespace-pre-wrap">
         {entry.content}
       </p>
-
-      {/* Bottom row: tags, bead link, actions menu */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
-          {entry.tags.slice(0, 3).map((tag) => (
-            <Badge
-              key={tag}
-              variant="secondary"
-              appearance="light"
-              size="xs"
-              className="text-t-muted"
-            >
-              {tag}
-            </Badge>
-          ))}
-          {entry.tags.length > 3 && (
-            <span className="text-xs text-t-faint shrink-0">
-              +{entry.tags.length - 3}
-            </span>
-          )}
-        </div>
-
-        <div className="flex items-center gap-1.5 shrink-0">
-          {entry.bead && (
-            <button
-              type="button"
-              onClick={() => onNavigate?.(entry.bead)}
-              className={cn(
-                "text-xs font-mono text-t-muted hover:text-t-secondary transition-colors rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring truncate max-w-[120px]",
-                !onNavigate && "pointer-events-none"
-              )}
-              title={entry.bead}
-              aria-label={`Navigate to bead ${entry.bead}`}
-            >
-              {entry.bead}
-            </button>
-          )}
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className="size-6 flex items-center justify-center rounded text-t-muted hover:text-t-secondary hover:bg-surface-overlay transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                aria-label="Entry actions"
-              >
-                <MoreVertical className="size-3.5" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="bg-surface-raised border-b-default"
-            >
-              <DropdownMenuItem
-                onClick={() => onEdit(entry)}
-                className="text-t-secondary focus:bg-surface-overlay focus:text-t-primary gap-2"
-              >
-                <Pencil className="size-3.5" aria-hidden="true" />
-                Edit content
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => onEdit(entry)}
-                className="text-t-secondary focus:bg-surface-overlay focus:text-t-primary gap-2"
-              >
-                <Tag className="size-3.5" aria-hidden="true" />
-                Edit tags
-              </DropdownMenuItem>
-              {entry.bead && onNavigate && (
-                <DropdownMenuItem
-                  onClick={() => onNavigate(entry.bead)}
-                  className="text-t-secondary focus:bg-surface-overlay focus:text-t-primary gap-2"
-                >
-                  <ExternalLink className="size-3.5" aria-hidden="true" />
-                  Navigate to bead
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuSeparator className="bg-surface-overlay" />
-              <DropdownMenuItem
-                onClick={() => onArchive(entry.key)}
-                className="text-t-secondary focus:bg-surface-overlay focus:text-t-primary gap-2"
-              >
-                <Archive className="size-3.5" aria-hidden="true" />
-                Archive
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => onDelete(entry.key)}
-                className="text-danger focus:bg-surface-overlay focus:text-danger gap-2"
-              >
-                <Trash2 className="size-3.5" aria-hidden="true" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
     </div>
   );
 }
 
 /**
- * Memory Panel - slide-out Sheet for browsing and managing knowledge base entries
+ * Memory Panel — slide-out Sheet for browsing and managing the project's
+ * bd memories (`bd remember` / `bd memories`).
  */
 export function MemoryPanel({
   open,
   onOpenChange,
   projectPath,
-  onNavigateToBead,
 }: MemoryPanelProps) {
   const {
     stats,
@@ -245,21 +146,32 @@ export function MemoryPanel({
     error,
     search,
     setSearch,
-    typeFilter,
-    setTypeFilter,
     filteredEntries,
+    createEntry,
     editEntry,
-    archiveEntry,
     deleteEntry,
+    refresh,
   } = useMemory(projectPath);
 
-  // Tab state maps to type filter
-  const [activeTab, setActiveTab] = useState<TabFilter>("all");
+  // The panel stays mounted while hidden, so without this it would keep showing
+  // whatever bd returned on first mount. Memories change outside the UI — an
+  // agent session running `bd remember` is the normal case — so reopening the
+  // panel must show the current state rather than a stale snapshot.
+  useEffect(() => {
+    if (open) void refresh();
+  }, [open, refresh]);
+
+  // Create dialog state
+  const [isCreating, setIsCreating] = useState(false);
+  const [newKey, setNewKey] = useState("");
+  const [newContent, setNewContent] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // Edit dialog state
   const [editingEntry, setEditingEntry] = useState<MemoryEntry | null>(null);
   const [editContent, setEditContent] = useState("");
-  const [editTags, setEditTags] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
+
   const [isSaving, setIsSaving] = useState(false);
 
   // Delete confirmation state
@@ -267,27 +179,40 @@ export function MemoryPanel({
   const [isDeleting, setIsDeleting] = useState(false);
 
   /**
-   * Handle tab change - maps tab value to type filter
+   * Open the create dialog with empty fields
    */
-  const handleTabChange = useCallback(
-    (value: string) => {
-      const tabValue = value as TabFilter;
-      setActiveTab(tabValue);
-      setTypeFilter(tabValue === "all" ? null : (tabValue as MemoryType));
-    },
-    [setTypeFilter]
-  );
+  const handleCreateOpen = useCallback(() => {
+    setNewKey("");
+    setNewContent("");
+    setCreateError(null);
+    setIsCreating(true);
+  }, []);
 
   /**
-   * Handle navigate to bead
+   * Save a new memory
    */
-  const handleNavigate = useCallback(
-    (beadId: string) => {
-      onOpenChange(false);
-      onNavigateToBead?.(beadId);
-    },
-    [onOpenChange, onNavigateToBead]
-  );
+  const handleCreateSave = useCallback(async () => {
+    const keyError = validateKey(newKey);
+    if (keyError) {
+      setCreateError(keyError);
+      return;
+    }
+    if (!newContent.trim()) {
+      setCreateError("Content is required");
+      return;
+    }
+
+    setIsSaving(true);
+    setCreateError(null);
+    try {
+      await createEntry(newKey.trim(), newContent);
+      setIsCreating(false);
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSaving(false);
+    }
+  }, [newKey, newContent, createEntry]);
 
   /**
    * Open edit dialog for an entry
@@ -295,7 +220,7 @@ export function MemoryPanel({
   const handleEditOpen = useCallback((entry: MemoryEntry) => {
     setEditingEntry(entry);
     setEditContent(entry.content);
-    setEditTags(entry.tags.join(", "));
+    setEditError(null);
   }, []);
 
   /**
@@ -303,34 +228,22 @@ export function MemoryPanel({
    */
   const handleEditSave = useCallback(async () => {
     if (!editingEntry) return;
+    if (!editContent.trim()) {
+      setEditError("Content is required");
+      return;
+    }
+
     setIsSaving(true);
+    setEditError(null);
     try {
-      const newTags = editTags
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
-      await editEntry(editingEntry.key, editContent, newTags);
+      await editEntry(editingEntry.key, editContent);
       setEditingEntry(null);
-    } catch {
-      // Error is logged in hook
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsSaving(false);
     }
-  }, [editingEntry, editContent, editTags, editEntry]);
-
-  /**
-   * Handle archive
-   */
-  const handleArchive = useCallback(
-    async (key: string) => {
-      try {
-        await archiveEntry(key);
-      } catch {
-        // Error is logged in hook
-      }
-    },
-    [archiveEntry]
-  );
+  }, [editingEntry, editContent, editEntry]);
 
   /**
    * Handle delete confirmation
@@ -362,71 +275,56 @@ export function MemoryPanel({
             </SheetTitle>
             <SheetDescription className="text-t-muted">
               {stats
-                ? `${stats.total} ${stats.total === 1 ? "entry" : "entries"}`
-                : "Loading..."}
+                ? `${stats.total} ${stats.total === 1 ? "entry" : "entries"} · bd memories`
+                : "Loading…"}
             </SheetDescription>
           </SheetHeader>
 
-          {/* Search input */}
-          <div className="relative mt-4">
-            <Search
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-t-muted"
-              aria-hidden="true"
-            />
-            <Input
-              type="text"
-              aria-label="Search memories"
-              placeholder="Search memories..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-8 pr-8 h-8 bg-surface-overlay/50 border-b-strong text-t-primary placeholder:text-t-muted"
-            />
-            {search && (
-              <button
-                type="button"
-                onClick={() => setSearch("")}
-                className="absolute right-0 top-1/2 -translate-y-1/2 size-11 flex items-center justify-center text-t-muted hover:text-t-secondary"
-                aria-label="Clear search"
-              >
-                <X className="size-3.5" />
-              </button>
-            )}
+          {/* Search + new */}
+          <div className="flex items-center gap-2 mt-4">
+            <div className="relative flex-1">
+              <Search
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-t-muted"
+                aria-hidden="true"
+              />
+              <Input
+                type="text"
+                aria-label="Search memories"
+                placeholder="Search memories..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-8 pr-8 h-8 bg-surface-overlay/50 border-b-strong text-t-primary placeholder:text-t-muted"
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  className="absolute right-0 top-1/2 -translate-y-1/2 size-8 flex items-center justify-center text-t-muted hover:text-t-secondary"
+                  aria-label="Clear search"
+                >
+                  <X className="size-3.5" aria-hidden="true" />
+                </button>
+              )}
+            </div>
+            <Button
+              size="sm"
+              className="h-8 shrink-0 gap-1.5"
+              onClick={handleCreateOpen}
+            >
+              <Plus className="size-3.5" aria-hidden="true" />
+              New
+            </Button>
           </div>
-
-          {/* Type filter tabs */}
-          <Tabs
-            value={activeTab}
-            onValueChange={handleTabChange}
-            className="mt-3"
-          >
-            <TabsList className="h-8 bg-surface-overlay/50 p-0.5 w-full">
-              <TabsTrigger
-                value="all"
-                className="h-7 flex-1 text-sm font-medium data-[state=active]:bg-surface-overlay data-[state=active]:text-t-primary data-[state=inactive]:text-t-tertiary"
-              >
-                All
-              </TabsTrigger>
-              <TabsTrigger
-                value="learned"
-                className="h-7 flex-1 text-sm font-medium data-[state=active]:bg-surface-overlay data-[state=active]:text-t-primary data-[state=inactive]:text-t-tertiary"
-              >
-                Learned
-              </TabsTrigger>
-              <TabsTrigger
-                value="investigation"
-                className="h-7 flex-1 text-sm font-medium data-[state=active]:bg-surface-overlay data-[state=active]:text-t-primary data-[state=inactive]:text-t-tertiary"
-              >
-                Investigation
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
 
           {/* Entries list */}
           <ScrollArea className="flex-1 mt-3 -mx-6 px-6">
             <div className="space-y-2 pb-4">
               {isLoading ? (
                 <div className="flex items-center justify-center py-12">
-                  <Loader2 className="size-5 text-t-muted animate-spin" aria-hidden="true" />
+                  <Loader2
+                    className="size-5 text-t-muted animate-spin"
+                    aria-hidden="true"
+                  />
                   <span className="sr-only">Loading memory entries</span>
                 </div>
               ) : error ? (
@@ -437,9 +335,7 @@ export function MemoryPanel({
                   <p className="text-sm text-danger">
                     Failed to load memory entries
                   </p>
-                  <p className="text-xs text-danger/60 mt-1">
-                    {error.message}
-                  </p>
+                  <p className="text-xs text-danger/60 mt-1">{error.message}</p>
                 </div>
               ) : filteredEntries.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
@@ -448,22 +344,28 @@ export function MemoryPanel({
                     aria-hidden="true"
                   />
                   <p className="text-sm text-t-muted">
-                    {search || typeFilter
+                    {search
                       ? "No entries match your search"
-                      : "No memory entries yet"}
+                      : "No memories yet"}
                   </p>
-                  {(search || typeFilter) && (
+                  {search ? (
                     <button
                       type="button"
-                      onClick={() => {
-                        setSearch("");
-                        setActiveTab("all");
-                        setTypeFilter(null);
-                      }}
+                      onClick={() => setSearch("")}
                       className="mt-2 text-xs text-t-muted hover:text-t-secondary underline underline-offset-2 rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                     >
-                      Clear filters
+                      Clear search
                     </button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="mt-3 gap-1.5"
+                      onClick={handleCreateOpen}
+                    >
+                      <Plus className="size-3.5" aria-hidden="true" />
+                      Add your first memory
+                    </Button>
                   )}
                 </div>
               ) : (
@@ -472,39 +374,91 @@ export function MemoryPanel({
                     key={entry.key}
                     entry={entry}
                     onEdit={handleEditOpen}
-                    onArchive={handleArchive}
                     onDelete={setDeletingKey}
-                    onNavigate={onNavigateToBead ? handleNavigate : undefined}
                   />
                 ))
               )}
             </div>
           </ScrollArea>
 
-          {/* Footer stats */}
+          {/* Footer */}
           {stats && stats.total > 0 && (
             <SheetFooter className="border-t border-b-default pt-3 -mx-6 px-6">
-              <p className="text-xs text-t-faint w-full text-center">
-                <span className="tabular-nums">{stats.learned}</span> learned
-                <span className="mx-1.5" aria-hidden="true">
-                  ·
-                </span>
-                <span className="tabular-nums">{stats.investigation}</span>{" "}
-                investigation
-                {stats.archived > 0 && (
-                  <>
-                    <span className="mx-1.5" aria-hidden="true">
-                      ·
-                    </span>
-                    <span className="tabular-nums">{stats.archived}</span>{" "}
-                    archived
-                  </>
-                )}
+              <p className="text-xs text-t-faint w-full text-center text-balance">
+                Shared with <code className="font-mono">bd memories</code> —
+                injected into agent sessions at <code className="font-mono">bd prime</code>
               </p>
             </SheetFooter>
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Create Dialog */}
+      <AlertDialog
+        open={isCreating}
+        onOpenChange={(isOpen) => !isOpen && setIsCreating(false)}
+      >
+        <AlertDialogContent className="bg-surface-raised border-b-default">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-t-primary">
+              New Memory
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-t-muted">
+              Stored via <code className="font-mono">bd remember</code> and
+              available to every agent session in this project.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <label
+                htmlFor="new-key"
+                className="text-sm font-medium text-t-secondary"
+              >
+                Key
+              </label>
+              <Input
+                id="new-key"
+                value={newKey}
+                onChange={(e) => setNewKey(e.target.value)}
+                className="bg-surface-overlay/50 border-b-strong text-t-primary placeholder:text-t-muted font-mono"
+                placeholder="pg-pool-exhaustion"
+              />
+            </div>
+            <div className="space-y-2">
+              <label
+                htmlFor="new-content"
+                className="text-sm font-medium text-t-secondary"
+              >
+                Content
+              </label>
+              <textarea
+                id="new-content"
+                value={newContent}
+                onChange={(e) => setNewContent(e.target.value)}
+                className="w-full h-32 rounded-md border border-b-strong bg-surface-overlay/50 px-3 py-2 text-sm text-t-primary placeholder:text-t-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
+                placeholder="[problem] → [solution]. [context why]"
+              />
+            </div>
+            {createError && (
+              <p role="alert" className="text-xs text-danger">
+                {createError}
+              </p>
+            )}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="ghost">Cancel</Button>} />
+            <Button onClick={handleCreateSave} disabled={isSaving}>
+              {isSaving ? (
+                <Loader2
+                  className="size-4 animate-spin mr-1.5"
+                  aria-hidden="true"
+                />
+              ) : null}
+              Create
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Edit Dialog */}
       <AlertDialog
@@ -514,10 +468,11 @@ export function MemoryPanel({
         <AlertDialogContent className="bg-surface-raised border-b-default">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-t-primary">
-              Edit Memory Entry
+              Edit Memory
             </AlertDialogTitle>
             <AlertDialogDescription className="text-t-muted">
-              Update the content or tags for this entry.
+              Updating{" "}
+              <code className="font-mono">{editingEntry?.key}</code>.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-4 py-2">
@@ -535,27 +490,20 @@ export function MemoryPanel({
                 className="w-full h-32 rounded-md border border-b-strong bg-surface-overlay/50 px-3 py-2 text-sm text-t-primary placeholder:text-t-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
               />
             </div>
-            <div className="space-y-2">
-              <label
-                htmlFor="edit-tags"
-                className="text-sm font-medium text-t-secondary"
-              >
-                Tags (comma-separated)
-              </label>
-              <Input
-                id="edit-tags"
-                value={editTags}
-                onChange={(e) => setEditTags(e.target.value)}
-                className="bg-surface-overlay/50 border-b-strong text-t-primary placeholder:text-t-muted"
-                placeholder="tag1, tag2, tag3..."
-              />
-            </div>
+            {editError && (
+              <p role="alert" className="text-xs text-danger">
+                {editError}
+              </p>
+            )}
           </div>
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="ghost">Cancel</Button>} />
             <Button onClick={handleEditSave} disabled={isSaving}>
               {isSaving ? (
-                <Loader2 className="size-4 animate-spin mr-1.5" aria-hidden="true" />
+                <Loader2
+                  className="size-4 animate-spin mr-1.5"
+                  aria-hidden="true"
+                />
               ) : null}
               Save
             </Button>
@@ -571,11 +519,12 @@ export function MemoryPanel({
         <AlertDialogContent className="bg-surface-raised border-b-default">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-t-primary">
-              Delete Memory Entry
+              Delete Memory
             </AlertDialogTitle>
             <AlertDialogDescription className="text-t-tertiary">
-              This will permanently delete this memory entry. This action cannot
-              be undone. Consider archiving instead.
+              This permanently removes{" "}
+              <code className="font-mono">{deletingKey}</code> from the
+              project&apos;s bd memories. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -586,7 +535,10 @@ export function MemoryPanel({
               disabled={isDeleting}
             >
               {isDeleting ? (
-                <Loader2 className="size-4 animate-spin mr-1.5" aria-hidden="true" />
+                <Loader2
+                  className="size-4 animate-spin mr-1.5"
+                  aria-hidden="true"
+                />
               ) : (
                 <Trash2 className="size-4 mr-1.5" aria-hidden="true" />
               )}

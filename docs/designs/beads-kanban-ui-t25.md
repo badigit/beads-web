@@ -3,6 +3,23 @@
 **Epic:** beads-kanban-ui-t25
 **Created:** 2026-01-27
 
+> **⚠️ SUPERSEDED (2026-07-19, bweb-1vr) — historical record only.**
+>
+> The data source described below, `.beads/memory/knowledge.jsonl`, is **dead**.
+> Investigation bweb-30u found that nothing had written that file since January
+> 2026: no `.beads/memory/` directory existed in any project on the machine, and
+> the panel was permanently empty for every project while `bd memories` held real
+> data. The two were unrelated systems sharing the name "Memory".
+>
+> The Memory panel now reads and writes **bd's own memories** (`bd remember` /
+> `bd memories` / `bd recall` / `bd forget`), which live in the project's Dolt
+> database. The JSONL path was removed outright rather than kept as a fallback —
+> there was no data anywhere to fall back to. The entry shape is now just
+> `{key, content}`; the `type`, `tags`, `ts`, `source`, `bead`, and archive
+> concepts below **do not exist** in bd memories.
+>
+> Current behaviour: `server/src/routes/memory.rs`.
+
 ## Overview
 
 Add a Memory feature to the beads-kanban-ui that lets users browse, search, edit, and archive knowledge base entries (`.beads/memory/knowledge.jsonl`) from within the UI. This involves:

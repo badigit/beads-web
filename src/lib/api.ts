@@ -379,28 +379,42 @@ export const fs = {
  * Memory API
  */
 export const memory = {
-  /** Fetch all memory entries and stats */
-  list: (path: string) => fetchApi<MemoryResponse>(
-    `/api/memory?path=${encodeURIComponent(path)}`
-  ),
+  /** Fetch bd memories and stats, optionally filtered by a search term */
+  list: (path: string, search?: string) => {
+    const params = new URLSearchParams({ path });
+    if (search?.trim()) params.set('search', search.trim());
+    return fetchApi<MemoryResponse>(`/api/memory?${params.toString()}`);
+  },
 
   /** Fetch memory stats only (lightweight) */
   stats: (path: string) => fetchApi<MemoryStats>(
     `/api/memory/stats?path=${encodeURIComponent(path)}`
   ),
 
-  /** Update an entry's content and/or tags */
-  update: (path: string, key: string, content?: string, tags?: string[]) =>
-    fetchApi<{ success: boolean; entry: MemoryEntry }>('/api/memory', {
-      method: 'PUT',
-      body: JSON.stringify({ path, key, content, tags }),
+  /** Read the full content of a single memory (`bd recall`) */
+  get: (path: string, key: string) => fetchApi<MemoryEntry>(
+    `/api/memory/entry?path=${encodeURIComponent(path)}&key=${encodeURIComponent(key)}`
+  ),
+
+  /** Create a memory (`bd remember`) */
+  create: (path: string, key: string, content: string) =>
+    fetchApi<{ success: boolean; created: boolean; entry: MemoryEntry }>('/api/memory', {
+      method: 'POST',
+      body: JSON.stringify({ path, key, content }),
     }),
 
-  /** Delete or archive an entry */
-  remove: (path: string, key: string, archive: boolean) =>
-    fetchApi<{ success: boolean; archived: boolean }>('/api/memory', {
+  /** Update a memory's content (`bd remember --key` upserts) */
+  update: (path: string, key: string, content: string) =>
+    fetchApi<{ success: boolean; created: boolean; entry: MemoryEntry }>('/api/memory', {
+      method: 'PUT',
+      body: JSON.stringify({ path, key, content }),
+    }),
+
+  /** Permanently delete a memory (`bd forget`) */
+  remove: (path: string, key: string) =>
+    fetchApi<{ success: boolean; key: string }>('/api/memory', {
       method: 'DELETE',
-      body: JSON.stringify({ path, key, archive }),
+      body: JSON.stringify({ path, key }),
     }),
 };
 
