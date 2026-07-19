@@ -154,6 +154,7 @@ async fn main() {
         .route("/api/health", get(routes::health))
         .nest("/api", routes::project_routes().with_state(database.clone()))
         .route("/api/beads", get(routes::beads::read_beads))
+        .route("/api/beads/counts", get(routes::beads::read_bead_counts))
         .route("/api/beads/create", post(routes::beads::create_bead_handler))
         .route("/api/beads/update", patch(routes::beads::update_bead_handler))
         // Global cross-project search

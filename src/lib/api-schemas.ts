@@ -41,6 +41,20 @@ export const BeadsResponseSchema = z.object({
   source: z.string().optional(),
 });
 
+/**
+ * Response of `GET /api/beads/counts` — the four kanban column totals the
+ * home page renders as a donut, aggregated server-side.
+ */
+export const BeadCountsResponseSchema = z.object({
+  counts: z.object({
+    open: z.number(),
+    in_progress: z.number(),
+    inreview: z.number(),
+    closed: z.number(),
+  }),
+  source: z.string().optional(),
+});
+
 export const PRChecksSchema = z.object({
   total: z.number(),
   passed: z.number(),
