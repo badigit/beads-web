@@ -4,9 +4,10 @@ import { useMemo, useState } from "react";
 
 
 
-import { Plus, Github, Search, X, Archive, LayoutGrid, List, ArrowDownAZ, Clock } from "lucide-react";
+import { Plus, Github, Filter, X, Archive, LayoutGrid, List, ArrowDownAZ, Clock } from "lucide-react";
 
 import { AddProjectDialog } from "@/components/add-project-dialog";
+import { HomeBeadSearch } from "@/components/home-bead-search";
 import { ProjectCard } from "@/components/project-card";
 import { ProjectRow } from "@/components/project-row";
 import { Badge } from "@/components/ui/badge";
@@ -173,21 +174,31 @@ export default function ProjectsPage() {
           </div>
 
           {/* Search and Filter Bar */}
-          {projects.length > 0 && (
-            <div className="mb-6 space-y-3">
-              {/* Search Input */}
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-t-muted" aria-hidden="true" />
-                <Input
-                  type="search"
-                  placeholder="Search projects..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 bg-surface-raised/50 border-b-strong"
-                  aria-label="Search projects"
-                />
-              </div>
+          <div className="mb-6 space-y-3">
+            {/* Primary: global bead search. Secondary: compact project filter. */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <HomeBeadSearch className="min-w-0 flex-1" />
 
+              {projects.length > 0 && (
+                <div className="relative shrink-0 sm:w-56">
+                  <Filter
+                    className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-t-muted"
+                    aria-hidden="true"
+                  />
+                  <Input
+                    type="search"
+                    placeholder="Filter projects..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="h-9 border-b-strong bg-surface-raised/50 pl-9 text-xs"
+                    aria-label="Filter projects by name or path"
+                  />
+                </div>
+              )}
+            </div>
+
+            {projects.length > 0 && (
+              <>
               {/* Tag Filter Chips */}
               {allTags.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2">
@@ -245,8 +256,9 @@ export default function ProjectsPage() {
                   Showing {filteredProjects.length} of {projects.length} project{projects.length !== 1 ? "s" : ""}
                 </p>
               )}
-            </div>
-          )}
+              </>
+            )}
+          </div>
 
           {/* Loading status line */}
           {loadingStatus && (

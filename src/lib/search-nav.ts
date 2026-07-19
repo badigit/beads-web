@@ -51,6 +51,19 @@ export function isSearchResultNavigable(result: Pick<SearchResult, 'project_id' 
 }
 
 /**
+ * Whether a pathname is the projects home page.
+ *
+ * The home page hosts its own always-visible search field, so the global
+ * dialog palette and its floating trigger stand down there. Tolerates a
+ * trailing slash and an empty/null pathname (both mean the root route).
+ */
+export function isHomePath(pathname: string | null | undefined): boolean {
+  if (!pathname) return true;
+  const normalized = pathname.replace(/\/+$/, '');
+  return normalized === '';
+}
+
+/**
  * Whether a keydown should open the palette.
  *
  * Stays out of the way when the palette is already open (the input owns the
