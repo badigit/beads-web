@@ -106,17 +106,61 @@ fn default_credentials_path() -> PathBuf {
     }
 }
 
+// ── Чтение файлов-источников ─────────────────────────────────────────────
+
+/// Исход попытки прочитать файл-источник конфигурации.
+///
+/// Три случая, которые раньше схлопывались в `fs::read_to_string(path).ok()?`
+/// и были неразличимы: файла нет (норма, идём дальше по цепочке молча),
+/// файл есть, но не читается (нет прав / битый / IO), файл прочитан.
+#[derive(Debug)]
+enum FileRead {
+    Contents(String),
+    Missing,
+    Failed(std::io::Error),
+}
+
+/// Читает файл-источник, отделяя «файла нет» от настоящей ошибки чтения.
+fn read_config_file(path: &Path) -> FileRead {
+    match fs::read_to_string(path) {
+        Ok(contents) => FileRead::Contents(contents),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => FileRead::Missing,
+        Err(err) => FileRead::Failed(err),
+    }
+}
+
+/// Читает файл-источник и логирует настоящие ошибки чтения.
+///
+/// Отсутствие файла — штатная часть резолва (цепочка источников), поэтому
+/// молчит. Любая другая ошибка — `warn` с путём и причиной: правило проекта
+/// `logging-standard` («не глотать молча»). Значение из файла НЕ логируется.
+fn read_config_file_logged(path: &Path, kind: &str) -> Option<String> {
+    match read_config_file(path) {
+        FileRead::Contents(contents) => Some(contents),
+        FileRead::Missing => None,
+        FileRead::Failed(err) => {
+            tracing::warn!(
+                "Cannot read {} {}: {} — skipping this source",
+                kind,
+                path.display(),
+                err
+            );
+            None
+        }
+    }
+}
+
 // ── Пароль к Dolt ────────────────────────────────────────────────────────
 
 /// Читает пароль из credentials-файла для секции `host:port`.
 fn read_credentials_password(path: &Path, section: &str) -> Option<String> {
-    let contents = fs::read_to_string(path).ok()?;
+    let contents = read_config_file_logged(path, "credentials file")?;
     parse_ini_value(&contents, section, "password")
 }
 
 /// Читает пароль из legacy `.env`-файла (`.dolt.env` / `.beads/.env`).
 fn read_legacy_password(path: &Path) -> Option<String> {
-    let contents = fs::read_to_string(path).ok()?;
+    let contents = read_config_file_logged(path, "legacy env file")?;
     parse_legacy_env_value(&contents, "BEADS_DOLT_PASSWORD")
 }
 
@@ -368,6 +412,532 @@ pub fn find_bd() -> Option<&'static PathBuf> {
         );
         None
     }).as_ref()
+}
+
+// ── Сводка конфигурации: что резолвнулось и ОТКУДА ───────────────────────
+//
+// Смысл секции (bweb-1ey.2): поломка «сервер живёт на закэшированном
+// pm2-окружении, хотя ни один документированный источник пароля его уже не
+// отдаёт» была НЕВИДИМА -- чтобы её найти, пришлось сверять `pm2 jlist` с
+// реестром PATH. Печать источника каждой настройки делает такую поломку
+// видимой в первых строчках лога.
+//
+// Форматирование вынесено в чистые функции: они не трогают ни env, ни ФС,
+// поэтому тестируются без гонок за глобальным окружением процесса -- и
+// инвариант «значение секрета не попадает в вывод» проверяется тестом.
+
+/// Одна строка сводки конфигурации.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingLine {
+    /// Готовый человекочитаемый текст строки.
+    pub text: String,
+    /// Настройка не резолвнулась — печатать на уровне `warn`, а не `info`.
+    pub warn: bool,
+}
+
+/// Человекочитаемое «откуда взято».
+fn describe_source(source: &ConfigSource) -> String {
+    match source {
+        ConfigSource::Env(name) => format!("from env {name}"),
+        ConfigSource::CredentialsFile(path) => {
+            format!("from credentials file {}", path.display())
+        }
+        ConfigSource::Legacy(path) => format!("from legacy file {}", path.display()),
+        ConfigSource::Default => "built-in default".to_string(),
+    }
+}
+
+/// Строка про обычную (несекретную) настройку: значение + источник.
+fn format_setting_line(name: &str, value: &str, source: &ConfigSource) -> SettingLine {
+    SettingLine {
+        text: format!("{name}: {value} ({})", describe_source(source)),
+        warn: false,
+    }
+}
+
+/// Строка про секрет.
+///
+/// ЗНАЧЕНИЕ НЕ ПОПАДАЕТ В ВЫВОД НИКОГДА — ни целиком, ни куском, ни в виде
+/// длины (`logging-standard`: пароли/токены только masked). Параметр `value`
+/// нужен исключительно чтобы отличить «резолвнулся» от «не найден»;
+/// инвариант закреплён тестом `secret_value_never_appears_in_a_formatted_line`.
+fn format_secret_line(
+    name: &str,
+    value: Option<&str>,
+    source: &ConfigSource,
+    checked: &[String],
+) -> SettingLine {
+    match value {
+        Some(_) => SettingLine {
+            text: format!("{name}: resolved ({})", describe_source(source)),
+            warn: false,
+        },
+        None => SettingLine {
+            text: format!("{name}: NOT FOUND (checked: {})", checked.join(", ")),
+            warn: true,
+        },
+    }
+}
+
+/// Где искали `bd` — для строки «NOT FOUND» (см. `find_bd`).
+const BD_SEARCH_LOCATIONS: &str =
+    "PATH, winget packages, ~/.cargo/bin, ~/.local/bin, ~/.beads/bin";
+
+/// Строка про резолв `bd` CLI. Путь сам по себе показывает канал установки.
+fn format_bd_line(path: Option<&Path>) -> SettingLine {
+    match path {
+        Some(path) => SettingLine {
+            text: format!("bd CLI: {}", path.display()),
+            warn: false,
+        },
+        None => SettingLine {
+            text: format!("bd CLI: NOT FOUND (checked: {BD_SEARCH_LOCATIONS})"),
+            warn: true,
+        },
+    }
+}
+
+/// Полный список мест, где ищется пароль, в порядке резолва — печатается,
+/// когда пароль не нашёлся, чтобы человек сразу видел, куда его положить.
+fn password_checked_sources(
+    section: &str,
+    credentials_path: &Path,
+    legacy_paths: &[PathBuf],
+) -> Vec<String> {
+    let mut checked = vec![
+        "env BEADS_DOLT_PASSWORD".to_string(),
+        "env DOLT_PASSWORD".to_string(),
+        format!(
+            "credentials file {} [{section}]",
+            credentials_path.display()
+        ),
+    ];
+    checked.extend(
+        legacy_paths
+            .iter()
+            .map(|path| format!("legacy file {}", path.display())),
+    );
+    checked
+}
+
+/// Резолв пароля вместе со списком проверенных мест.
+pub struct PasswordResolution {
+    pub password: Option<String>,
+    pub source: ConfigSource,
+    pub checked: Vec<String>,
+}
+
+/// Debug пишется вручную: производный напечатал бы пароль целиком, а
+/// `dbg!(config)` / `tracing::debug!("{:?}", config)` — слишком естественный
+/// способ незаметно добавить утечку в будущей правке. Значение заменяется на
+/// `<redacted>`, факт наличия остаётся видимым. Закреплено тестом
+/// `debug_output_never_contains_the_password_value`.
+impl std::fmt::Debug for PasswordResolution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasswordResolution")
+            .field(
+                "password",
+                &self.password.as_ref().map(|_| "<redacted>"),
+            )
+            .field("source", &self.source)
+            .field("checked", &self.checked)
+            .finish()
+    }
+}
+
+/// Все настройки процесса, резолвнутые разом — то, что печатается при старте
+/// и в `--doctor`.
+#[derive(Debug)]
+pub struct ResolvedConfig {
+    pub server_port: (u16, ConfigSource),
+    pub dolt_host: (String, ConfigSource),
+    pub dolt_port: (u16, ConfigSource),
+    pub dolt_user: (String, ConfigSource),
+    pub dolt_password: PasswordResolution,
+    pub credentials_path: (PathBuf, ConfigSource),
+    pub bd_path: Option<PathBuf>,
+}
+
+impl ResolvedConfig {
+    /// Резолвит все настройки (читает env и ФС).
+    pub fn resolve() -> Self {
+        let (host, host_source) = resolve_dolt_host();
+        let (port, port_source) = resolve_dolt_port();
+        let credentials_path = resolve_credentials_path();
+        let legacy_paths = legacy_password_file_candidates();
+        let section = format!("{host}:{port}");
+        let (password, password_source) = resolve_dolt_password_from(
+            &[
+                ("BEADS_DOLT_PASSWORD", env::var("BEADS_DOLT_PASSWORD").ok()),
+                ("DOLT_PASSWORD", env::var("DOLT_PASSWORD").ok()),
+            ],
+            &section,
+            &credentials_path.0,
+            &legacy_paths,
+        );
+
+        Self {
+            server_port: resolve_server_port(),
+            dolt_host: (host, host_source),
+            dolt_port: (port, port_source),
+            dolt_user: resolve_dolt_user(),
+            dolt_password: PasswordResolution {
+                password,
+                source: password_source,
+                checked: password_checked_sources(&section, &credentials_path.0, &legacy_paths),
+            },
+            credentials_path,
+            bd_path: find_bd().cloned(),
+        }
+    }
+
+    /// Строки сводки — по строке на настройку. Чистая функция.
+    pub fn summary(&self) -> Vec<SettingLine> {
+        vec![
+            format_setting_line(
+                "server port",
+                &self.server_port.0.to_string(),
+                &self.server_port.1,
+            ),
+            format_setting_line("dolt host", &self.dolt_host.0, &self.dolt_host.1),
+            format_setting_line("dolt port", &self.dolt_port.0.to_string(), &self.dolt_port.1),
+            format_setting_line("dolt user", &self.dolt_user.0, &self.dolt_user.1),
+            format_secret_line(
+                "dolt password",
+                self.dolt_password.password.as_deref(),
+                &self.dolt_password.source,
+                &self.dolt_password.checked,
+            ),
+            format_bd_line(self.bd_path.as_deref()),
+        ]
+    }
+}
+
+/// Печатает сводку конфигурации при старте: по строке на настройку, что и
+/// откуда. Нерезолвнутая настройка уходит в `warn` со списком проверенных мест.
+pub fn log_startup_summary(config: &ResolvedConfig) {
+    for line in config.summary() {
+        if line.warn {
+            tracing::warn!("{}", line.text);
+        } else {
+            tracing::info!("{}", line.text);
+        }
+    }
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+
+    /// Заведомый секрет: ни один форматтер не имеет права его напечатать.
+    const SECRET: &str = "super-secret-value";
+
+    fn cred_path() -> PathBuf {
+        PathBuf::from("C:\\Users\\Dee\\AppData\\Roaming\\beads\\credentials")
+    }
+
+    // ── Обычные (несекретные) настройки ─────────────────────────────────
+
+    #[test]
+    fn env_source_names_the_variable() {
+        let line = format_setting_line(
+            "dolt host",
+            "10.9.0.105",
+            &ConfigSource::Env("BEADS_DOLT_SERVER_HOST"),
+        );
+
+        assert_eq!(
+            line.text,
+            "dolt host: 10.9.0.105 (from env BEADS_DOLT_SERVER_HOST)"
+        );
+        assert!(!line.warn);
+    }
+
+    #[test]
+    fn credentials_file_source_names_the_path() {
+        let line = format_setting_line("some setting", "value", &ConfigSource::CredentialsFile(cred_path()));
+
+        assert_eq!(
+            line.text,
+            "some setting: value (from credentials file C:\\Users\\Dee\\AppData\\Roaming\\beads\\credentials)"
+        );
+    }
+
+    #[test]
+    fn legacy_source_names_the_path() {
+        let line = format_setting_line(
+            "some setting",
+            "value",
+            &ConfigSource::Legacy(PathBuf::from(".dolt.env")),
+        );
+
+        assert_eq!(line.text, "some setting: value (from legacy file .dolt.env)");
+    }
+
+    #[test]
+    fn default_source_says_built_in_default() {
+        let line = format_setting_line("server port", "3008", &ConfigSource::Default);
+
+        assert_eq!(line.text, "server port: 3008 (built-in default)");
+        assert!(!line.warn, "a default is not a failure to resolve");
+    }
+
+    // ── Секреты ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn resolved_secret_reports_only_the_fact_and_the_source() {
+        let line = format_secret_line(
+            "dolt password",
+            Some(SECRET),
+            &ConfigSource::CredentialsFile(cred_path()),
+            &[],
+        );
+
+        assert_eq!(
+            line.text,
+            "dolt password: resolved (from credentials file C:\\Users\\Dee\\AppData\\Roaming\\beads\\credentials)"
+        );
+        assert!(!line.warn);
+    }
+
+    #[test]
+    fn unresolved_secret_warns_and_lists_every_checked_source() {
+        let checked = vec![
+            "env BEADS_DOLT_PASSWORD".to_string(),
+            "env DOLT_PASSWORD".to_string(),
+            "credentials file C:\\creds [10.9.0.105:3307]".to_string(),
+            "legacy file .dolt.env".to_string(),
+        ];
+
+        let line = format_secret_line("dolt password", None, &ConfigSource::Default, &checked);
+
+        assert!(line.warn, "an unresolved setting must be logged at warn level");
+        assert!(line.text.starts_with("dolt password: NOT FOUND (checked: "));
+        for source in &checked {
+            assert!(
+                line.text.contains(source),
+                "checked source {source:?} missing from {:?}",
+                line.text
+            );
+        }
+    }
+
+    /// Инвариант безопасности (logging-standard: пароли только masked).
+    /// Держит будущие правки: значение не должно утечь ни целиком, ни куском,
+    /// ни в виде длины -- ни при одном источнике.
+    #[test]
+    fn secret_value_never_appears_in_a_formatted_line() {
+        let sources = [
+            ConfigSource::Env("BEADS_DOLT_PASSWORD"),
+            ConfigSource::CredentialsFile(cred_path()),
+            ConfigSource::Legacy(PathBuf::from(".dolt.env")),
+            ConfigSource::Default,
+        ];
+
+        for source in &sources {
+            let line = format_secret_line("dolt password", Some(SECRET), source, &[]);
+
+            assert!(!line.text.contains(SECRET), "secret leaked: {}", line.text);
+            assert!(
+                !line.text.contains(&SECRET[..6]),
+                "secret fragment leaked: {}",
+                line.text
+            );
+            assert!(
+                !line.text.contains(&SECRET.len().to_string()),
+                "secret length leaked: {}",
+                line.text
+            );
+        }
+    }
+
+    // ── Список проверенных мест для пароля ──────────────────────────────
+
+    #[test]
+    fn checked_sources_list_env_credentials_and_legacy_in_resolution_order() {
+        let legacy = [PathBuf::from(".dolt.env"), PathBuf::from(".beads/.env")];
+
+        let checked = password_checked_sources("10.9.0.105:3307", &cred_path(), &legacy);
+
+        assert_eq!(checked.len(), 5, "2 env vars + credentials file + 2 legacy files");
+        assert_eq!(checked[0], "env BEADS_DOLT_PASSWORD");
+        assert_eq!(checked[1], "env DOLT_PASSWORD");
+        assert!(
+            checked[2].contains("credentials file") && checked[2].contains("[10.9.0.105:3307]"),
+            "credentials entry must name the file and the section: {:?}",
+            checked[2]
+        );
+        // каждый legacy-файл называется отдельно -- человеку нужен точный путь
+        assert!(checked[3].contains(".dolt.env"), "{:?}", checked[3]);
+        assert!(checked[4].contains(".beads"), "{:?}", checked[4]);
+    }
+
+    // ── bd CLI ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn bd_line_reports_the_resolved_path() {
+        let line = format_bd_line(Some(&PathBuf::from("C:\\tools\\bd.exe")));
+
+        assert_eq!(line.text, "bd CLI: C:\\tools\\bd.exe");
+        assert!(!line.warn);
+    }
+
+    #[test]
+    fn missing_bd_warns_and_lists_where_it_looked() {
+        let line = format_bd_line(None);
+
+        assert!(line.warn);
+        assert!(line.text.contains("NOT FOUND"));
+        assert!(line.text.contains("PATH"));
+    }
+
+    // ── Сводка целиком ──────────────────────────────────────────────────
+
+    fn sample_config() -> ResolvedConfig {
+        ResolvedConfig {
+            server_port: (3056, ConfigSource::Env("PORT")),
+            dolt_host: ("10.9.0.105".to_string(), ConfigSource::Env("BEADS_DOLT_SERVER_HOST")),
+            dolt_port: (3307, ConfigSource::Default),
+            dolt_user: ("beads".to_string(), ConfigSource::Env("BEADS_DOLT_SERVER_USER")),
+            dolt_password: PasswordResolution {
+                password: Some(SECRET.to_string()),
+                source: ConfigSource::CredentialsFile(cred_path()),
+                checked: vec![],
+            },
+            credentials_path: (cred_path(), ConfigSource::Default),
+            bd_path: Some(PathBuf::from("C:\\tools\\bd.exe")),
+        }
+    }
+
+    #[test]
+    fn summary_covers_every_setting_exactly_once() {
+        let lines = sample_config().summary();
+
+        for name in [
+            "server port:",
+            "dolt host:",
+            "dolt port:",
+            "dolt user:",
+            "dolt password:",
+            "bd CLI:",
+        ] {
+            assert_eq!(
+                lines.iter().filter(|l| l.text.starts_with(name)).count(),
+                1,
+                "expected exactly one {name} line in {lines:?}"
+            );
+        }
+    }
+
+    /// Второй рубеж того же инварианта: `{:?}` тоже не имеет права печатать
+    /// пароль. Производный Debug напечатал бы его целиком, а `dbg!`/
+    /// `tracing::debug!("{:?}", config)` в будущей правке — совершенно
+    /// естественный способ это сделать незаметно.
+    #[test]
+    fn debug_output_never_contains_the_password_value() {
+        let config = sample_config();
+
+        let via_struct = format!("{:?}", config.dolt_password);
+        let via_parent = format!("{config:?}");
+
+        assert!(!via_struct.contains(SECRET), "secret leaked: {via_struct}");
+        assert!(!via_parent.contains(SECRET), "secret leaked: {via_parent}");
+        assert!(
+            via_struct.contains("<redacted>"),
+            "a resolved password must still be visible as redacted: {via_struct}"
+        );
+    }
+
+    #[test]
+    fn debug_output_distinguishes_resolved_from_missing_password() {
+        let missing = PasswordResolution {
+            password: None,
+            source: ConfigSource::Default,
+            checked: vec![],
+        };
+
+        assert!(format!("{missing:?}").contains("None"));
+    }
+
+    #[test]
+    fn summary_never_contains_the_password_value() {
+        let joined = sample_config()
+            .summary()
+            .iter()
+            .map(|l| l.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!joined.contains(SECRET), "secret leaked into summary: {joined}");
+    }
+
+    /// Acceptance-критерий бида: при пустом окружении пароль берётся из
+    /// credentials-файла, и это ВИДНО в строке лога.
+    #[test]
+    fn empty_environment_summary_names_the_credentials_file_as_the_password_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("credentials");
+        fs::write(&path, format!("[10.9.0.105:3307]\npassword={SECRET}\n")).unwrap();
+        let empty_env = [
+            ("BEADS_DOLT_PASSWORD", None),
+            ("DOLT_PASSWORD", None),
+        ];
+
+        let (password, source) =
+            resolve_dolt_password_from(&empty_env, "10.9.0.105:3307", &path, &[]);
+        let line = format_secret_line("dolt password", password.as_deref(), &source, &[]);
+
+        assert!(
+            line.text.contains("from credentials file"),
+            "expected credentials-file source in {:?}",
+            line.text
+        );
+        assert!(!line.text.contains(SECRET));
+    }
+}
+
+#[cfg(test)]
+mod file_read_tests {
+    use super::*;
+
+    #[test]
+    fn missing_file_is_reported_as_missing_not_as_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let result = read_config_file(&tmp.path().join("no-such-file"));
+
+        assert!(
+            matches!(result, FileRead::Missing),
+            "a missing file is the normal case and must stay silent"
+        );
+    }
+
+    #[test]
+    fn unreadable_path_is_reported_as_failure() {
+        // A directory is the portable stand-in for "exists but cannot be read
+        // as a file": Windows yields PermissionDenied, Unix IsADirectory --
+        // neither is NotFound, which is exactly the distinction under test.
+        let tmp = tempfile::tempdir().unwrap();
+
+        let result = read_config_file(tmp.path());
+
+        match result {
+            FileRead::Failed(err) => assert_ne!(err.kind(), std::io::ErrorKind::NotFound),
+            other => panic!("expected FileRead::Failed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn readable_file_yields_its_contents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("credentials");
+        fs::write(&path, "[host:1]\npassword=x\n").unwrap();
+
+        match read_config_file(&path) {
+            FileRead::Contents(contents) => assert!(contents.contains("password=x")),
+            other => panic!("expected FileRead::Contents, got {other:?}"),
+        }
+    }
 }
 
 #[cfg(test)]
