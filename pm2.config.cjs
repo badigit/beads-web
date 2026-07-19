@@ -30,6 +30,10 @@ module.exports = {
         BEADS_DOLT_SERVER_HOST: '10.9.0.105',
         BEADS_DOLT_SERVER_PORT: '3307',
         BEADS_DOLT_SERVER_USER: 'beads',
+        // Под pm2 stdout и так не терминал, поэтому вкладка не откроется и без
+        // этой строки. Оставлена явно: рестартов у сервиса много, а лишняя
+        // вкладка поверх уже открытого UI раздражает сразу (bweb-vqt).
+        BEADS_WEB_NO_BROWSER: '1',
       },
     },
   ],

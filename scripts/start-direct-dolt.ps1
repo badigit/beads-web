@@ -30,6 +30,9 @@ $env:PORT = "$Port"
 $env:BEADS_DOLT_SERVER_HOST = "10.9.0.105"
 $env:BEADS_DOLT_SERVER_PORT = "3307"
 $env:BEADS_DOLT_SERVER_USER = "beads"
+# Вывод уходит в лог-файлы ниже, поэтому stdout не терминал и вкладка не
+# открылась бы и так. Оставлено явно, чтобы намерение читалось (bweb-vqt).
+$env:BEADS_WEB_NO_BROWSER = "1"
 
 Get-Process -Name "beads-web-win-x64", "beads-web-win-x64-direct", "beads-server" -ErrorAction SilentlyContinue |
   Stop-Process -Force -ErrorAction SilentlyContinue
