@@ -374,11 +374,14 @@ pub fn bd_command_path() -> std::ffi::OsString {
 
 /// Picks the first spawnable binary out of `where`/`which` output.
 ///
+/// Shared by `find_bd` and `routes::session::find_claude` — both resolve a
+/// CLI that ships Windows shell shims.
+///
 /// On Windows `where bd` also lists the npm package's shell shims -- an
 /// extensionless bash script plus `bd.cmd` / `bd.ps1`. `Command::new` cannot
 /// spawn those ("%1 is not a valid Win32 application", os error 193), and the
 /// shims often come first in PATH, so only a real `.exe` counts there.
-fn pick_executable(lookup_output: &str, windows: bool) -> Option<PathBuf> {
+pub(crate) fn pick_executable(lookup_output: &str, windows: bool) -> Option<PathBuf> {
     lookup_output
         .lines()
         .map(str::trim)

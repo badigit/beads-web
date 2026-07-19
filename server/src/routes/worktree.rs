@@ -173,50 +173,65 @@ pub struct CreateWorktreeResponse {
 ///
 /// Returns the worktree path and whether it already existed.
 pub async fn create_worktree(Json(request): Json<CreateWorktreeRequest>) -> impl IntoResponse {
-    let repo_path = Path::new(&request.repo_path);
-    if let Err(resp) = check_repo_path(repo_path) { return resp.into_response(); }
+    match ensure_worktree(&request.repo_path, &request.bead_id, &request.base_branch).await {
+        Ok(response) => Json(response).into_response(),
+        Err(resp) => resp.into_response(),
+    }
+}
+
+/// Error payload shared by the worktree helpers and their HTTP callers.
+pub type RouteError = (StatusCode, Json<serde_json::Value>);
+
+fn route_error(status: StatusCode, message: String) -> RouteError {
+    (status, Json(serde_json::json!({ "error": message })))
+}
+
+/// Creates the worktree for `bead_id` if it does not exist yet, reusing it
+/// otherwise. Shared by `POST /api/git/worktree` and `POST /api/session/spawn`
+/// so both endpoints agree on the layout (`<repo>/.worktrees/bd-<id>`) and on
+/// the branch-already-exists recovery path.
+pub async fn ensure_worktree(
+    repo_path_str: &str,
+    bead_id: &str,
+    base_branch: &str,
+) -> Result<CreateWorktreeResponse, RouteError> {
+    let repo_path = Path::new(repo_path_str);
+    validate_path_security(repo_path).map_err(|e| route_error(StatusCode::FORBIDDEN, e))?;
 
     // Validate repository path exists
     if !repo_path.exists() || !repo_path.is_dir() {
-        return (
+        return Err(route_error(
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": format!("Repository path does not exist: {}", request.repo_path)
-            })),
-        )
-            .into_response();
+            format!("Repository path does not exist: {}", repo_path_str),
+        ));
     }
 
     // Ensure .worktrees/ is in .gitignore
-    if let Err(e) = ensure_gitignore_entry(&request.repo_path) {
+    if let Err(e) = ensure_gitignore_entry(repo_path_str) {
         tracing::warn!("Failed to update .gitignore: {}", e);
     }
 
-    let branch_name = format!("bd-{}", request.bead_id);
+    let branch_name = format!("bd-{}", bead_id);
     let worktrees_dir = repo_path.join(".worktrees");
     let worktree_path = worktrees_dir.join(&branch_name);
 
     // Check if worktree already exists (idempotent)
     if worktree_path.exists() {
-        return Json(CreateWorktreeResponse {
+        return Ok(CreateWorktreeResponse {
             success: true,
             worktree_path: worktree_path.to_string_lossy().to_string(),
             branch: branch_name,
             already_existed: true,
-        })
-        .into_response();
+        });
     }
 
     // Create .worktrees directory if it doesn't exist
-    if let Err(e) = fs::create_dir_all(&worktrees_dir) {
-        return (
+    fs::create_dir_all(&worktrees_dir).map_err(|e| {
+        route_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": format!("Failed to create .worktrees directory: {}", e)
-            })),
+            format!("Failed to create .worktrees directory: {}", e),
         )
-            .into_response();
-    }
+    })?;
 
     // Create the worktree with a new branch
     let output = hidden_command("git")
@@ -226,76 +241,68 @@ pub async fn create_worktree(Json(request): Json<CreateWorktreeRequest>) -> impl
             &worktree_path.to_string_lossy(),
             "-b",
             &branch_name,
-            &request.base_branch,
+            base_branch,
         ])
-        .current_dir(&request.repo_path)
+        .current_dir(repo_path_str)
         .output()
-        .await;
+        .await
+        .map_err(|e| {
+            route_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to run git command: {}", e),
+            )
+        })?;
 
-    match output {
-        Ok(output) if output.status.success() => Json(CreateWorktreeResponse {
+    if output.status.success() {
+        return Ok(CreateWorktreeResponse {
             success: true,
             worktree_path: worktree_path.to_string_lossy().to_string(),
             branch: branch_name,
             already_existed: false,
-        })
-        .into_response(),
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // Check if branch already exists (perhaps worktree was removed but branch exists)
-            if stderr.contains("already exists") {
-                // Try to add worktree using existing branch
-                let retry_output = hidden_command("git")
-                    .args([
-                        "worktree",
-                        "add",
-                        &worktree_path.to_string_lossy(),
-                        &branch_name,
-                    ])
-                    .current_dir(&request.repo_path)
-                    .output()
-                    .await;
+        });
+    }
 
-                match retry_output {
-                    Ok(output) if output.status.success() => Json(CreateWorktreeResponse {
-                        success: true,
-                        worktree_path: worktree_path.to_string_lossy().to_string(),
-                        branch: branch_name,
-                        already_existed: true, // Branch existed even if worktree didn't
-                    })
-                    .into_response(),
-                    Ok(output) => (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({
-                            "error": format!("Failed to create worktree: {}", String::from_utf8_lossy(&output.stderr))
-                        })),
-                    )
-                        .into_response(),
-                    Err(e) => (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(serde_json::json!({
-                            "error": format!("Failed to run git command: {}", e)
-                        })),
-                    )
-                        .into_response(),
-                }
-            } else {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({
-                        "error": format!("Failed to create worktree: {}", stderr)
-                    })),
-                )
-                    .into_response()
-            }
-        }
-        Err(e) => (
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    // The branch can survive a removed worktree — retry without `-b`.
+    if !stderr.contains("already exists") {
+        return Err(route_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": format!("Failed to run git command: {}", e)
-            })),
-        )
-            .into_response(),
+            format!("Failed to create worktree: {}", stderr),
+        ));
+    }
+
+    let retry = hidden_command("git")
+        .args([
+            "worktree",
+            "add",
+            &worktree_path.to_string_lossy(),
+            &branch_name,
+        ])
+        .current_dir(repo_path_str)
+        .output()
+        .await
+        .map_err(|e| {
+            route_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to run git command: {}", e),
+            )
+        })?;
+
+    if retry.status.success() {
+        Ok(CreateWorktreeResponse {
+            success: true,
+            worktree_path: worktree_path.to_string_lossy().to_string(),
+            branch: branch_name,
+            already_existed: true, // Branch existed even if worktree didn't
+        })
+    } else {
+        Err(route_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "Failed to create worktree: {}",
+                String::from_utf8_lossy(&retry.stderr)
+            ),
+        ))
     }
 }
 

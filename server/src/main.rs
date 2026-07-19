@@ -192,6 +192,8 @@ async fn main() {
         .route("/api/git/create-pr", post(routes::worktree::create_pr))
         .route("/api/git/merge-pr", post(routes::worktree::merge_pr))
         .route("/api/git/rebase-siblings", post(routes::worktree::rebase_siblings))
+        // Session endpoints
+        .route("/api/session/spawn", post(routes::session::spawn_session))
         // Agent endpoints
         .route("/api/agents", get(routes::agents::list_agents))
         .route("/api/agents/:filename", put(routes::agents::update_agent))
