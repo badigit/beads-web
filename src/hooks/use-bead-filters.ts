@@ -178,10 +178,13 @@ export function useBeadFilters(
     const { sortField, sortDirection } = filters;
 
     // Filter beads
+    const trimmedSearch = debouncedSearch.trim();
     const filtered = beads.filter((bead) => {
-      // Search filter (uses debounced value for performance)
-      if (debouncedSearch) {
-        const searchLower = debouncedSearch.toLowerCase();
+      // Search filter (uses debounced value for performance).
+      // Trimmed so a stray leading/trailing space (e.g. pasted from chat
+      // or `bd` CLI output) doesn't silently break an otherwise exact match.
+      if (trimmedSearch) {
+        const searchLower = trimmedSearch.toLowerCase();
         const matchesSearch =
           bead.id.toLowerCase().includes(searchLower) ||
           bead.title.toLowerCase().includes(searchLower) ||
@@ -237,7 +240,7 @@ export function useBeadFilters(
    */
   const hasActiveFilters = useMemo(() => {
     return (
-      filters.search !== "" ||
+      filters.search.trim() !== "" ||
       filters.statuses.length > 0 ||
       filters.priorities.length > 0 ||
       filters.owners.length > 0 ||
