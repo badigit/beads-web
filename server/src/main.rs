@@ -177,6 +177,10 @@ async fn main() {
         .route("/api/fs/list", get(routes::fs::list_directory))
         .route("/api/fs/exists", get(routes::fs::path_exists))
         .route("/api/fs/read", get(routes::fs::read_file))
+        .route(
+            "/api/fs/list-design-docs",
+            get(routes::fs::list_design_docs),
+        )
         .route("/api/fs/roots", get(routes::fs::fs_roots))
         .route("/api/fs/open-external", post(routes::fs::open_external))
         .route("/api/bd/command", post(routes::cli::bd_command))
