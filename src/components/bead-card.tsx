@@ -5,7 +5,7 @@ import { FolderOpen, GitPullRequest, Link2, MessageSquare, Check, X, Clock } fro
 import { CopyableText } from "@/components/copyable-text";
 import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/hooks/use-theme";
-import { formatBeadId, formatWorktreePath, isBlocked, truncate } from "@/lib/bead-utils";
+import { formatWorktreePath, isBlocked, truncate } from "@/lib/bead-utils";
 import { cn } from "@/lib/utils";
 import type { Bead, WorktreeStatus, PRStatus, StatusBadgeInfo } from "@/types";
 
@@ -237,8 +237,8 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
         {/* Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <CopyableText copyText={bead.id} className="text-xs text-t-muted font-mono shrink-0 tabular-nums">
-              {formatBeadId(bead.id)}
+            <CopyableText copyText={bead.id} className="text-xs text-t-muted font-mono shrink-0 tabular-nums max-w-[120px] truncate">
+              {bead.id}
             </CopyableText>
             <span className="text-[13px] font-medium text-t-primary truncate">
               {bead.title}
@@ -309,7 +309,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
                 <CopyableText copyText={`#${ticketNumber}`}>#{ticketNumber}</CopyableText>{" "}
               </>
             )}
-            <CopyableText copyText={bead.id}>{formatBeadId(bead.id)}</CopyableText>
+            <CopyableText copyText={bead.id} className="inline-block max-w-[120px] truncate align-bottom">{bead.id}</CopyableText>
           </span>
           {blocked && (
             <span className="theme-badge text-[10px] font-semibold px-1.5 py-0.5 bg-danger/15 text-danger">
@@ -373,8 +373,8 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
                 </CopyableText>
               )}
               {ticketNumber !== undefined && " "}
-              <CopyableText copyText={bead.id}>
-                {formatBeadId(bead.id)}
+              <CopyableText copyText={bead.id} className="inline-block max-w-[120px] truncate align-bottom">
+                {bead.id}
               </CopyableText>
             </div>
             <div className="flex items-center gap-1.5">

@@ -15,7 +15,7 @@ import { Progress } from "@/components/ui/progress";
 import { usePRSettings } from "@/hooks/use-pr-settings";
 import { useTheme } from "@/hooks/use-theme";
 import * as api from "@/lib/api";
-import { formatBeadId, isBlocked, truncate } from "@/lib/bead-utils";
+import { isBlocked, truncate } from "@/lib/bead-utils";
 import { closeBead } from "@/lib/cli";
 import { isDesignDocPath } from "@/lib/design-doc";
 import { computeEpicProgress } from "@/lib/epic-parser";
@@ -315,7 +315,7 @@ export function EpicCard({
           <Layers className="h-4 w-4 text-epic shrink-0 mt-0.5" aria-hidden="true" />
           <div className="flex-1 min-w-0 space-y-2">
             <div className="flex items-center gap-2">
-              <CopyableText copyText={epic.id} className="text-xs text-t-muted font-mono shrink-0">{formatBeadId(epic.id)}</CopyableText>
+              <CopyableText copyText={epic.id} className="text-xs text-t-muted font-mono shrink-0 max-w-[120px] truncate">{epic.id}</CopyableText>
               <span className="text-[13px] font-semibold text-t-primary truncate">{epic.title}</span>
               <span className="text-[10px] font-semibold text-epic shrink-0">EPIC</span>
             </div>
@@ -359,7 +359,7 @@ export function EpicCard({
                   <CopyableText copyText={`#${ticketNumber}`}>#{ticketNumber}</CopyableText>{" "}
                 </>
               )}
-              <CopyableText copyText={epic.id}>{formatBeadId(epic.id)}</CopyableText>
+              <CopyableText copyText={epic.id} className="inline-block max-w-[120px] truncate align-bottom">{epic.id}</CopyableText>
             </span>
             <span className="theme-badge text-[10px] font-semibold px-1.5 py-0.5 bg-epic/15 text-epic">
               Epic
@@ -406,7 +406,7 @@ export function EpicCard({
                 </CopyableText>
               )}
               {ticketNumber !== undefined && " "}
-              <CopyableText copyText={epic.id}>{formatBeadId(epic.id)}</CopyableText>
+              <CopyableText copyText={epic.id} className="inline-block max-w-[120px] truncate align-bottom">{epic.id}</CopyableText>
             </span>
           </div>
           <div className="flex items-center gap-1.5">
