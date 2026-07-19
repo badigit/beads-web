@@ -5,6 +5,7 @@
 
 mod config;
 mod db;
+mod doctor;
 mod dolt;
 mod process;
 mod routes;
@@ -91,8 +92,18 @@ async fn main() {
     tracing::subscriber::set_global_default(subscriber)
         .expect("Failed to set tracing subscriber");
 
-    // Parse port from environment variable, default to 3008
-    let (port, _) = config::resolve_server_port();
+    // `--doctor` prints the same configuration summary plus live connectivity
+    // checks, then exits without starting the server.
+    if doctor::is_doctor_invocation(std::env::args()) {
+        std::process::exit(doctor::run().await);
+    }
+
+    // Every setting, and where it came from -- a stale cached environment or a
+    // password that no documented source provides must be visible in the first
+    // lines of the log, not require digging through `pm2 jlist` (bweb-1ey.2).
+    let resolved = config::ResolvedConfig::resolve();
+    config::log_startup_summary(&resolved);
+    let (port, _) = resolved.server_port;
 
     // Configure CORS for development
     let cors = CorsLayer::new()
@@ -117,9 +128,9 @@ async fn main() {
         );
     }
 
-    // Check for bd CLI availability and compatibility
+    // Check bd CLI compatibility. Its path is already reported by the startup
+    // summary above, so only the version and the --json probe are logged here.
     if let Some(bd) = routes::find_bd() {
-        info!("bd CLI found: {}", bd.display());
         if let Ok(output) = process::hidden_std_command(bd).arg("--version").output() {
             if output.status.success() {
                 let version = String::from_utf8_lossy(&output.stdout);
@@ -142,7 +153,7 @@ async fn main() {
             }
         }
     } else {
-        tracing::warn!("⚠ bd CLI not found — beads read/write will not work for filesystem projects");
+        tracing::warn!("  beads read/write will not work for filesystem projects");
         tracing::warn!("  Install: https://github.com/steveyegge/beads");
     }
 
