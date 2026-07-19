@@ -18,6 +18,7 @@ import { CopyableText } from "@/components/copyable-text";
 import { CreateBeadDialog } from "@/components/create-bead-dialog";
 import { DesignDocViewer } from "@/components/design-doc-viewer";
 import { EditableField } from "@/components/editable-field";
+import { SpawnSessionButton } from "@/components/spawn-session-button";
 import { SubtaskList } from "@/components/subtask-list";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -224,6 +225,11 @@ export function BeadDetail({
               <ArrowLeft className="h-4 w-4" aria-hidden="true" />
               Back
             </Button>
+            <SpawnSessionButton
+              beadId={bead.id}
+              projectPath={projectPath}
+              wrapperClassName="items-end max-w-[60%]"
+            />
           </div>
 
           <div className="space-y-4">
