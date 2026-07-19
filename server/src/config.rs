@@ -172,6 +172,20 @@ fn read_legacy_password(path: &Path) -> Option<String> {
 
 /// Возвращает `.dolt.env` / `.beads/.env` относительно текущей рабочей
 /// директории процесса -- зеркалит `pm2.config.cjs` / `start-direct-dolt.ps1`.
+///
+/// ВАЖНО (bweb-05w): резолв здесь намеренно cwd-относительный, а не
+/// репо-относительный. Оба лаунчера (`pm2.config.cjs`: `cwd: REPO_ROOT`;
+/// `scripts/start-direct-dolt.ps1`: `Start-Process -WorkingDirectory
+/// $repoRoot`) сами гарантируют cwd = корень репо, так что для них это одно
+/// и то же место. Если бинарник когда-нибудь запустят напрямую из другой
+/// директории, legacy-файл здесь просто не найдётся -- поиск наверх по
+/// дереву каталогов сознательно не реализован, потому что сам legacy-источник
+/// уже мёртв: ни `.dolt.env`, ни `.beads/.env` не существуют в репозитории и
+/// не существовали в его истории, конвенция полностью перешла на
+/// централизованный credentials-файл (`resolve_credentials_path`). Усложнять
+/// резолв ради источника, которым никто не пользуется, не стоит; когда
+/// уверенность в этом окончательно подтвердится, эту ветку можно будет
+/// удалить целиком вместе с относящимися к ней тестами.
 fn legacy_password_file_candidates() -> Vec<PathBuf> {
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     vec![cwd.join(".dolt.env"), cwd.join(".beads").join(".env")]
@@ -415,6 +429,81 @@ fn winget_bd_candidates(packages_root: &Path) -> Vec<PathBuf> {
     dirs.into_iter().map(|dir| dir.join("bd.exe")).collect()
 }
 
+/// Tries to resolve `bd` via PATH (`where` on Windows, `which` elsewhere),
+/// accepting only a real, spawnable executable.
+///
+/// Returns `None` on any failure along the way: the lookup command itself
+/// failing to run, a non-zero exit, no spawnable line in its output
+/// (`pick_executable`), or the picked path not actually existing on disk.
+fn find_bd_in_path() -> Option<PathBuf> {
+    let program = if cfg!(windows) { "where" } else { "which" };
+    let output = crate::process::hidden_std_command(program)
+        .arg("bd")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let path_str = String::from_utf8_lossy(&output.stdout);
+    let path = pick_executable(&path_str, cfg!(windows))?;
+    if !path.exists() {
+        return None;
+    }
+    tracing::info!("Found bd CLI in PATH: {}", path.display());
+    Some(path)
+}
+
+/// winget package-folder candidates (Windows only, empty elsewhere).
+///
+/// winget is the primary install channel on Windows and never reaches PATH.
+fn winget_candidates_from_env() -> Vec<PathBuf> {
+    if !cfg!(windows) {
+        return vec![];
+    }
+    let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") else {
+        return vec![];
+    };
+    let packages = Path::new(&local_app_data)
+        .join("Microsoft")
+        .join("WinGet")
+        .join("Packages");
+    winget_bd_candidates(&packages)
+}
+
+/// Home-directory candidates, in search order: `~/.cargo/bin`, `~/.local/bin`,
+/// `~/.beads/bin`, then (Unix only) `/usr/local/bin`.
+fn home_dir_candidates(home: &Path) -> Vec<PathBuf> {
+    let mut candidates = vec![
+        home.join(".cargo")
+            .join("bin")
+            .join(if cfg!(windows) { "bd.exe" } else { "bd" }),
+        home.join(".local").join("bin").join("bd"),
+        home.join(".beads").join("bin").join("bd"),
+    ];
+    if !cfg!(windows) {
+        candidates.push(PathBuf::from("/usr/local/bin/bd"));
+    }
+    candidates
+}
+
+/// Full list of common-location candidates outside PATH, in search order:
+/// winget package folders, then home-directory locations.
+fn common_location_candidates() -> Vec<PathBuf> {
+    let mut candidates = winget_candidates_from_env();
+    if let Some(home) = UserDirs::new().map(|d| d.home_dir().to_path_buf()) {
+        candidates.extend(home_dir_candidates(&home));
+    }
+    candidates
+}
+
+/// First candidate that exists on disk, in list order. Logs the hit.
+fn first_existing(candidates: &[PathBuf]) -> Option<PathBuf> {
+    let path = candidates.iter().find(|candidate| candidate.exists())?;
+    tracing::info!("Found bd CLI at: {}", path.display());
+    Some(path.clone())
+}
+
 /// Returns the path to the `bd` CLI binary, or `None` if not found.
 ///
 /// Search order:
@@ -425,61 +514,29 @@ fn winget_bd_candidates(packages_root: &Path) -> Vec<PathBuf> {
 /// 5. `/usr/local/bin/bd`
 /// 6. `~/.beads/bin/bd`
 pub fn find_bd() -> Option<&'static PathBuf> {
-    BD_PATH.get_or_init(|| {
-        // Try PATH first
-        if let Ok(output) = crate::process::hidden_std_command(if cfg!(windows) { "where" } else { "which" })
-            .arg("bd")
-            .output()
-        {
-            if output.status.success() {
-                let path_str = String::from_utf8_lossy(&output.stdout);
-                if let Some(path) = pick_executable(&path_str, cfg!(windows)) {
-                    if path.exists() {
-                        tracing::info!("Found bd CLI in PATH: {}", path.display());
-                        return Some(path);
-                    }
-                }
+    BD_PATH
+        .get_or_init(|| {
+            if let Some(path) = find_bd_in_path() {
+                return Some(path);
             }
-        }
 
-        // Search common locations
-        let home = UserDirs::new().map(|d| d.home_dir().to_path_buf());
-        let mut candidates: Vec<PathBuf> = vec![];
-
-        // winget is the primary install channel on Windows and never reaches PATH
-        if cfg!(windows) {
-            if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-                let packages = Path::new(&local_app_data)
-                    .join("Microsoft")
-                    .join("WinGet")
-                    .join("Packages");
-                candidates.extend(winget_bd_candidates(&packages));
+            let candidates = common_location_candidates();
+            if let Some(path) = first_existing(&candidates) {
+                return Some(path);
             }
-        }
 
-        if let Some(ref home) = home {
-            candidates.push(home.join(".cargo").join("bin").join(if cfg!(windows) { "bd.exe" } else { "bd" }));
-            candidates.push(home.join(".local").join("bin").join("bd"));
-            candidates.push(home.join(".beads").join("bin").join("bd"));
-            if !cfg!(windows) {
-                candidates.push(PathBuf::from("/usr/local/bin/bd"));
-            }
-        }
-
-        for candidate in &candidates {
-            if candidate.exists() {
-                tracing::info!("Found bd CLI at: {}", candidate.display());
-                return Some(candidate.clone());
-            }
-        }
-
-        tracing::warn!(
-            "bd CLI not found. Searched PATH and: {}. \
-             Install bd (https://github.com/steveyegge/beads) or add it to PATH.",
-            candidates.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
-        );
-        None
-    }).as_ref()
+            tracing::warn!(
+                "bd CLI not found. Searched PATH and: {}. \
+                 Install bd (https://github.com/steveyegge/beads) or add it to PATH.",
+                candidates
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            None
+        })
+        .as_ref()
 }
 
 // ── Сводка конфигурации: что резолвнулось и ОТКУДА ───────────────────────
