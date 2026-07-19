@@ -27,6 +27,12 @@ vi.mock('@/hooks/use-file-watcher', () => ({
   useFileWatcher: () => ({ isWatching: false, error: null }),
 }));
 
+// Same reason as the file watcher: the dolt:// live-update hook opens an
+// EventSource, which jsdom does not provide.
+vi.mock('@/hooks/use-dolt-watcher', () => ({
+  useDoltWatcher: () => ({ isConnected: false }),
+}));
+
 // Import AFTER the mocks so the hook picks them up.
 /* eslint-disable import/first, import/order */
 import { useBeads } from '../use-beads';

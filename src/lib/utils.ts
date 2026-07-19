@@ -20,6 +20,18 @@ export function isDoltProject(path: string | null | undefined): boolean {
 }
 
 /**
+ * Extract the database name from a `dolt://<database>` project path.
+ *
+ * Returns null for filesystem projects and for a bare `dolt://` with no name,
+ * so callers can use the result directly as "is there a database to watch?".
+ */
+export function doltDatabase(path: string | null | undefined): string | null {
+  if (!isDoltProject(path)) return null;
+  const database = path!.slice("dolt://".length).replace(/\/+$/, "");
+  return database.length > 0 ? database : null;
+}
+
+/**
  * Derive a `bd init --prefix <slug>` slug from a project path (or name fallback).
  *
  * Rules:

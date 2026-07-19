@@ -167,6 +167,9 @@ async fn main() {
     // Initialize version check cache
     let version_cache = routes::version::new_cache();
 
+    // Registry of per-database revision pollers backing the dolt:// live updates
+    let dolt_watch_registry = routes::dolt_watch::new_registry();
+
     // Build the router
     let app = Router::new()
         .route("/api/health", get(routes::health))
@@ -181,6 +184,7 @@ async fn main() {
         .route("/api/dolt/status", get(routes::dolt::dolt_status))
         .route("/api/dolt/databases", get(routes::dolt::dolt_databases))
         .route("/api/dolt/servers", get(routes::dolt::dolt_servers))
+        .route("/api/dolt/watch", get(routes::dolt_watch::watch_dolt))
         .route("/api/fs/list", get(routes::fs::list_directory))
         .route("/api/fs/exists", get(routes::fs::path_exists))
         .route("/api/fs/read", get(routes::fs::read_file))
@@ -225,6 +229,7 @@ async fn main() {
         .layer(Extension(version_cache))
         .layer(Extension(database))
         .layer(Extension(dolt_manager))
+        .layer(Extension(dolt_watch_registry))
         .layer(cors);
 
     let addr = format!("0.0.0.0:{}", port);

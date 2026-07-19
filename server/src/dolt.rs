@@ -197,6 +197,38 @@ impl DoltManager {
         Ok(counts)
     }
 
+    /// Returns a hash identifying the database's current working-set state.
+    ///
+    /// Used by the live-update poller to tell "nothing changed" from "reload" at
+    /// the cost of a single scalar query, instead of refetching every issue.
+    ///
+    /// Hashes the *working set* rather than `HEAD`: `bd` writes into the working
+    /// set and does not always commit, so a `HASHOF('HEAD')` probe would miss
+    /// changes that readers can already see (bweb-489.5.3).
+    pub async fn database_revision(&self, db_name: &str) -> Result<String, DoltError> {
+        validate_database_name(db_name)?;
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+        // `DOLT_HASHOF_DB` resolves against the session's current database, and
+        // with no database selected it silently hashes whichever one the session
+        // defaults to — the wrong revision, reported as success. Select the
+        // database first, on this same connection, exactly like the commit paths.
+        conn.query_drop(format!("USE `{}`", db_name))
+            .await
+            .map_err(|e| DoltError::QueryFailed(format!("use database: {}", e)))?;
+        let revision: Option<String> = conn
+            .query_first("SELECT DOLT_HASHOF_DB('WORKING')")
+            .await
+            .map_err(|e| DoltError::QueryFailed(format!("database_revision: {}", e)))?;
+        self.available.store(true, Ordering::Relaxed);
+        revision.ok_or_else(|| {
+            DoltError::QueryFailed("database_revision returned no rows".to_string())
+        })
+    }
+
     /// Returns the issue prefix stored by `bd init`, falling back to the database name.
     pub async fn issue_prefix(&self, db_name: &str) -> Result<String, DoltError> {
         validate_database_name(db_name)?;

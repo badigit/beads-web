@@ -7,6 +7,7 @@ pub mod agents;
 pub mod beads;
 pub mod cli;
 pub mod dolt;
+pub mod dolt_watch;
 pub mod fs;
 pub mod git;
 pub mod memory;

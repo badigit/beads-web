@@ -17,7 +17,9 @@ rust-embed = { version = "8", features = ["interpolate-folder-path"] }
 open = "5"
 mime_guess = "2"
 notify = "6"
-tokio-stream = "0.1"
+# `sync` enables BroadcastStream, used to fan one Dolt revision poller out to
+# every connected SSE client (routes/dolt_watch.rs).
+tokio-stream = { version = "0.1", features = ["sync"] }
 futures = "0.3"
 rusqlite = { version = "0.31", features = ["bundled"] }
 uuid = { version = "1", features = ["v4"] }
