@@ -15,12 +15,28 @@ use tracing::{info, warn};
 use crate::routes::beads::{Bead, Comment};
 
 /// Connection parameters for a Dolt SQL server (central or per-project host).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct DoltConnectConfig {
     host: String,
     port: u16,
     user: String,
     password: Option<String>,
+}
+
+/// Debug пишется вручную по той же причине, что и у `config::PasswordResolution`:
+/// производный напечатал бы пароль целиком, а `tracing::debug!("{:?}", config)`
+/// — слишком естественный способ незаметно добавить утечку в будущей правке.
+/// Значение заменяется на `<redacted>`, факт наличия остаётся видимым.
+/// Закреплено тестом `debug_output_never_contains_the_password_value`.
+impl std::fmt::Debug for DoltConnectConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DoltConnectConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
 }
 
 impl DoltConnectConfig {
@@ -874,6 +890,49 @@ pub fn database_name_for_project(project_path: &Path) -> Option<String> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// Тот же инвариант, что закреплён для `PasswordResolution` в `config.rs`:
+    /// производный `Debug` напечатал бы пароль целиком, а
+    /// `tracing::debug!("{:?}", config)` — слишком естественный способ
+    /// незаметно добавить утечку в будущей правке.
+    #[test]
+    fn debug_output_never_contains_the_password_value() {
+        let config = DoltConnectConfig {
+            host: "10.9.0.105".to_string(),
+            port: 3307,
+            user: "beads".to_string(),
+            password: Some("super-secret-value".to_string()),
+        };
+
+        let rendered = format!("{config:?}");
+
+        assert!(
+            !rendered.contains("super-secret-value"),
+            "пароль утёк в Debug-вывод: {rendered}"
+        );
+        assert!(
+            rendered.contains("<redacted>"),
+            "факт наличия пароля должен оставаться видимым: {rendered}"
+        );
+        // остальные поля по-прежнему диагностируемы
+        assert!(rendered.contains("10.9.0.105"));
+        assert!(rendered.contains("beads"));
+    }
+
+    #[test]
+    fn debug_output_distinguishes_absent_password() {
+        let config = DoltConnectConfig {
+            host: "127.0.0.1".to_string(),
+            port: 3307,
+            user: "root".to_string(),
+            password: None,
+        };
+
+        let rendered = format!("{config:?}");
+
+        assert!(rendered.contains("None"), "отсутствие пароля должно быть видно: {rendered}");
+        assert!(!rendered.contains("<redacted>"));
+    }
 
     // ── DependencySchema tests ─────────────────────────────────────────
 
