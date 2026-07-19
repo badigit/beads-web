@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  isHomePath,
   isSearchResultNavigable,
   nextResultIndex,
   searchResultHref,
@@ -113,5 +114,23 @@ describe('shouldOpenSearchPalette', () => {
 
   it('leaves native Ctrl+K alone when focus is in another editable field', () => {
     expect(shouldOpenSearchPalette(base, false, true)).toBe(false);
+  });
+});
+
+describe('isHomePath', () => {
+  it('recognises the root route', () => {
+    expect(isHomePath('/')).toBe(true);
+  });
+
+  it('tolerates a trailing slash and a missing pathname', () => {
+    expect(isHomePath('//')).toBe(true);
+    expect(isHomePath(null)).toBe(true);
+    expect(isHomePath('')).toBe(true);
+  });
+
+  it('rejects the project board and other routes', () => {
+    expect(isHomePath('/project')).toBe(false);
+    expect(isHomePath('/project/')).toBe(false);
+    expect(isHomePath('/settings')).toBe(false);
   });
 });

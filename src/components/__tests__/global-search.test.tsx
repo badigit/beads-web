@@ -6,8 +6,10 @@ import type { SearchResult } from '@/lib/api';
 import { GlobalSearch } from '../global-search';
 
 const push = vi.fn();
+let pathname = '/project';
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push }),
+  usePathname: () => pathname,
 }));
 
 const searchQuery = vi.fn();
@@ -53,6 +55,7 @@ beforeEach(() => {
   // shouldAdvanceTime keeps testing-library's waitFor polling alive while the
   // debounce timer stays under manual control.
   vi.useFakeTimers({ shouldAdvanceTime: true });
+  pathname = '/project';
   push.mockReset();
   searchQuery.mockReset();
   searchQuery.mockResolvedValue(HITS);
@@ -158,5 +161,26 @@ describe('GlobalSearch', () => {
 
     expect(firstSignal.aborted).toBe(true);
     expect(searchQuery).toHaveBeenCalledTimes(2);
+  });
+
+  describe('on the home page', () => {
+    beforeEach(() => {
+      pathname = '/';
+    });
+
+    it('renders nothing — the inline field owns search there', () => {
+      const { container } = render(<GlobalSearch />);
+      expect(container).toBeEmptyDOMElement();
+    });
+
+    it('does not hijack Ctrl+K away from the inline field', async () => {
+      render(<GlobalSearch />);
+      fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300);
+      });
+      expect(screen.queryByRole('combobox')).toBeNull();
+    });
   });
 });
