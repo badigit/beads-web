@@ -105,15 +105,64 @@ describe('clicking the bead ID on a kanban card', () => {
     expect(writeText).not.toHaveBeenCalled();
   });
 
-  it('copies the ticket number separately from the key', async () => {
-    localStorage.setItem('beads-theme', 'notion-warm');
-    render(
-      <BeadCard bead={BEAD} allBeads={[BEAD]} ticketNumber={35} onSelect={vi.fn()} />
-    );
+});
+
+// Layouts whose badge renders "#N <id>" as one visual unit. compact-row shows
+// the bare id, so there is no ticket number to click there.
+const TICKET_LAYOUTS: Array<[string, string]> = [
+  ['property-tags', 'notion-warm'],
+  ['standard', 'default'],
+];
+
+/**
+ * bweb-deq: the whole "#35 bweb-0wk" badge is a single copy target for the
+ * bead id. Copying "#35" is useless, and which value you got used to depend
+ * on which character you happened to hit.
+ */
+describe('clicking the ticket number part of the badge', () => {
+  beforeEach(() => {
+    writeText.mockReset();
+    writeText.mockResolvedValue(undefined);
+    localStorage.clear();
+  });
+
+  it.each(TICKET_LAYOUTS)('copies the bead id, not "#35", in %s layout', async (_layout, themeId) => {
+    renderCard(themeId);
 
     await fireAndSettle(() => fireEvent.click(screen.getByText('#35')));
 
-    expect(writeText).toHaveBeenCalledWith('#35');
+    expect(writeText).toHaveBeenCalledWith('bweb-0wk');
+    expect(writeText).not.toHaveBeenCalledWith('#35');
+  });
+
+  it.each(TICKET_LAYOUTS)('does not open the detail panel in %s layout', async (_layout, themeId) => {
+    const { onSelect } = renderCard(themeId);
+
+    await fireAndSettle(() => fireEvent.click(screen.getByText('#35')));
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it.each(TICKET_LAYOUTS)('is a single copy button naming the bead id in %s layout', (_layout, themeId) => {
+    renderCard(themeId);
+
+    const buttons = screen.getAllByRole('button', { name: /copy bead id bweb-0wk/i });
+    expect(buttons).toHaveLength(1);
+    // The whole badge — ticket number included — is that one button.
+    expect(buttons[0]).toHaveTextContent('#35');
+    expect(buttons[0]).toHaveTextContent('bweb-0wk');
+    // No separate "#35" copy target survives.
+    expect(screen.queryByRole('button', { name: /copy #35/i })).not.toBeInTheDocument();
+  });
+
+  it.each(TICKET_LAYOUTS)('copies the bead id via Enter on the badge in %s layout', async (_layout, themeId) => {
+    const { onSelect } = renderCard(themeId);
+
+    const badge = screen.getByRole('button', { name: /copy bead id bweb-0wk/i });
+    await fireAndSettle(() => fireEvent.keyDown(badge, { key: 'Enter' }));
+
+    expect(writeText).toHaveBeenCalledWith('bweb-0wk');
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });
 
