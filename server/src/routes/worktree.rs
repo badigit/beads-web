@@ -422,7 +422,7 @@ pub async fn delete_worktree(Json(request): Json<DeleteWorktreeRequest>) -> impl
             .await;
 
         // Close the bead (ignore errors - bead may not exist or already be closed)
-        let _ = hidden_command("bd")
+        let _ = hidden_command(super::bd_command_path())
             .args(["close", &request.bead_id])
             .current_dir(&request.repo_path)
             .output()

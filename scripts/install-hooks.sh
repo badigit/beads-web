@@ -153,10 +153,33 @@ if [ -n "$RUST_FILES" ] || [ "$HAS_CARGO_TOML" -eq 1 ]; then
   if ! command -v cargo >/dev/null 2>&1; then
     echo "Warning: cargo not found, skipping Rust checks" >&2
   else
-    echo "Running cargo clippy on server..."
-    if ! cargo clippy --manifest-path "$REPO_ROOT/server/Cargo.toml" -- -D warnings; then
-      echo "Cargo clippy failed." >&2
-      EXIT_CODE=1
+    # clippy can be missing on the default toolchain while another installed
+    # toolchain has it — on Windows the default is often msvc, which this
+    # project cannot even build (no MSVC linker; we build the gnu target).
+    # Empty CLIPPY_TOOLCHAIN means "default toolchain is fine".
+    CLIPPY_TOOLCHAIN=""
+    CLIPPY_FOUND=0
+    if cargo clippy --version >/dev/null 2>&1; then
+      CLIPPY_FOUND=1
+    elif command -v rustup >/dev/null 2>&1; then
+      for tc in $(rustup toolchain list | cut -d' ' -f1); do
+        if cargo "+$tc" clippy --version >/dev/null 2>&1; then
+          CLIPPY_TOOLCHAIN="+$tc"
+          CLIPPY_FOUND=1
+          break
+        fi
+      done
+    fi
+
+    if [ "$CLIPPY_FOUND" -eq 0 ]; then
+      echo "Warning: cargo clippy not available on any installed toolchain, skipping Rust checks" >&2
+      echo "  Install it with: rustup component add clippy" >&2
+    else
+      echo "Running cargo clippy on server${CLIPPY_TOOLCHAIN:+ ($CLIPPY_TOOLCHAIN)}..."
+      if ! cargo ${CLIPPY_TOOLCHAIN} clippy --manifest-path "$REPO_ROOT/server/Cargo.toml" -- -D warnings; then
+        echo "Cargo clippy failed." >&2
+        EXIT_CODE=1
+      fi
     fi
   fi
 fi

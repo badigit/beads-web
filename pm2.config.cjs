@@ -11,7 +11,6 @@ const os = require('os');
 const path = require('path');
 
 const REPO_ROOT = __dirname;
-const BD_DIR = path.join(os.homedir(), 'go', 'bin');
 
 function readDoltPassword() {
   if (process.env.BEADS_DOLT_PASSWORD) return process.env.BEADS_DOLT_PASSWORD.trim();
@@ -30,9 +29,37 @@ function readDoltPassword() {
   return '';
 }
 
-const bdPath = fs.existsSync(path.join(BD_DIR, 'bd.exe'))
-  ? `${BD_DIR};${process.env.PATH || ''}`
-  : (process.env.PATH || '');
+/**
+ * Найти каталог с НАСТОЯЩИМ bd.exe.
+ *
+ * Сервер спавнит bd через Command::new, поэтому shell-шимы npm-пакета
+ * (bd без расширения, bd.cmd, bd.ps1) не годятся: Windows не может их
+ * запустить -- os error 193. winget кладёт bd внутрь самой папки пакета
+ * (алиаса в WinGet\Links нет), а суффикс папки меняется при переустановке,
+ * поэтому ищем по префиксу. Зеркалит scripts/start-direct-dolt.ps1.
+ */
+function resolveBdDir() {
+  const candidates = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+
+  const wingetPackages = path.join(
+    process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Packages'
+  );
+  try {
+    for (const entry of fs.readdirSync(wingetPackages).sort()) {
+      if (entry.startsWith('GasTownHall.Beads_')) {
+        candidates.push(path.join(wingetPackages, entry));
+      }
+    }
+  } catch {}
+
+  // историческое расположение `go install`, оставлено как fallback
+  candidates.push(path.join(os.homedir(), 'go', 'bin'));
+
+  return candidates.find((dir) => fs.existsSync(path.join(dir, 'bd.exe'))) || null;
+}
+
+const bdDir = resolveBdDir();
+const bdPath = bdDir ? `${bdDir};${process.env.PATH || ''}` : (process.env.PATH || '');
 
 module.exports = {
   apps: [

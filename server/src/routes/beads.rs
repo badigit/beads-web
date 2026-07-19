@@ -766,7 +766,7 @@ pub async fn create_bead_handler(
 
     let result = tokio::time::timeout(
         Duration::from_secs(30),
-        hidden_command("bd").args(&args).current_dir(&project_path).output(),
+        hidden_command(super::bd_command_path()).args(&args).current_dir(&project_path).output(),
     ).await;
 
     match result {
@@ -891,7 +891,7 @@ pub async fn update_bead_handler(
 
     let result = tokio::time::timeout(
         Duration::from_secs(30),
-        hidden_command("bd").args(&args).current_dir(&project_path).output(),
+        hidden_command(super::bd_command_path()).args(&args).current_dir(&project_path).output(),
     ).await;
 
     match result {
