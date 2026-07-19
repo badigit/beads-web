@@ -524,6 +524,44 @@ export const update = {
 };
 
 /**
+ * Request body for `POST /api/session/spawn`
+ */
+export interface SpawnSessionInput {
+  project_path: string;
+  bead_id: string;
+  /** Base branch for a freshly created worktree (server default: `main`) */
+  base_branch?: string;
+}
+
+/**
+ * Response of a successful session spawn
+ */
+export interface SpawnSessionResponse {
+  success: boolean;
+  /** Claude session id, ready for `claude --resume <id>` */
+  session_id: string;
+  worktree_path: string;
+  branch: string;
+  worktree_already_existed: boolean;
+  duration_ms: number;
+}
+
+/**
+ * Claude Desktop session API
+ *
+ * A spawn creates the worktree, runs a headless `claude -p` inside it and
+ * hands the session to Claude Desktop. Measured wall-clock is ~35s and the
+ * server ceiling is 180s, so the default 10s fetch timeout is far too short.
+ */
+export const session = {
+  spawn: (data: SpawnSessionInput) => fetchApi<SpawnSessionResponse>('/api/session/spawn', {
+    method: 'POST',
+    body: JSON.stringify(data),
+    signal: AbortSignal.timeout(200000), // server ceiling is 180s
+  }),
+};
+
+/**
  * File Watcher (Server-Sent Events)
  */
 export const watch = {
