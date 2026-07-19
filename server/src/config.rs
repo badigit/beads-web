@@ -12,6 +12,7 @@
 
 use std::env;
 use std::fs;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -26,6 +27,11 @@ pub enum ConfigSource {
     CredentialsFile(PathBuf),
     /// Прочитано из legacy per-repo файла (`.dolt.env`, `.beads/.env`).
     Legacy(PathBuf),
+    /// Задано аргументом командной строки.
+    Cli(&'static str),
+    /// Выведено из обстановки запуска, а не задано явно (например, вывод
+    /// перенаправлен в лог -> процесс запущен в фоне).
+    Detected(&'static str),
     /// Ни один источник не дал значения — применяется дефолт вызывающего кода.
     Default,
 }
@@ -284,6 +290,65 @@ pub fn resolve_server_port() -> (u16, ConfigSource) {
     (3008, ConfigSource::Default)
 }
 
+// ── Автооткрытие браузера ────────────────────────────────────────────────
+
+/// Аргумент, отключающий автооткрытие браузера.
+const NO_BROWSER_FLAG: &str = "--no-browser";
+
+/// Переменная окружения с тем же смыслом, что и `--no-browser`.
+const NO_BROWSER_ENV: &str = "BEADS_WEB_NO_BROWSER";
+
+/// Есть ли `--no-browser` среди аргументов.
+fn has_no_browser_flag<I: IntoIterator<Item = String>>(args: I) -> bool {
+    args.into_iter().any(|arg| arg == NO_BROWSER_FLAG)
+}
+
+/// Считается ли значение переменной окружения включённым опт-аутом.
+///
+/// Отрицательные и пустые значения НЕ отключают браузер: `...=0` должно
+/// читаться как «не отключать», иначе поведение противоречит написанному.
+fn env_opt_out_enabled(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+/// Решает, открывать ли браузер на старте. Всё внешнее — параметрами, чтобы
+/// логика тестировалась без глобального окружения и без реального stdout.
+///
+/// Порядок: флаг -> env -> обстановка запуска -> дефолт.
+fn resolve_open_browser_from(
+    no_browser_flag: bool,
+    env_value: Option<String>,
+    stdout_is_terminal: bool,
+) -> (bool, ConfigSource) {
+    if no_browser_flag {
+        return (false, ConfigSource::Cli(NO_BROWSER_FLAG));
+    }
+    if let Some(value) = env_value {
+        if env_opt_out_enabled(&value) {
+            return (false, ConfigSource::Env(NO_BROWSER_ENV));
+        }
+    }
+    // Под pm2/службой/docker и при любом редиректе вывода stdout не терминал.
+    // Открывать вкладку на каждый рестарт сервиса незачем -- именно это и
+    // копило вкладки у пользователя, держащего UI открытым постоянно.
+    if !stdout_is_terminal {
+        return (false, ConfigSource::Detected("non-interactive stdout"));
+    }
+    (true, ConfigSource::Default)
+}
+
+/// То же, но с чтением реального окружения процесса.
+pub fn resolve_open_browser() -> (bool, ConfigSource) {
+    resolve_open_browser_from(
+        has_no_browser_flag(env::args()),
+        env::var(NO_BROWSER_ENV).ok(),
+        std::io::stdout().is_terminal(),
+    )
+}
+
 // ── Резолв `bd` CLI ──────────────────────────────────────────────────────
 //
 // Moved here from `routes/mod.rs` (originally added by bweb-0wk) -- same
@@ -443,6 +508,8 @@ fn describe_source(source: &ConfigSource) -> String {
             format!("from credentials file {}", path.display())
         }
         ConfigSource::Legacy(path) => format!("from legacy file {}", path.display()),
+        ConfigSource::Cli(flag) => format!("from command-line {flag}"),
+        ConfigSource::Detected(what) => format!("detected: {what}"),
         ConfigSource::Default => "built-in default".to_string(),
     }
 }
@@ -556,6 +623,7 @@ pub struct ResolvedConfig {
     pub dolt_password: PasswordResolution,
     pub credentials_path: (PathBuf, ConfigSource),
     pub bd_path: Option<PathBuf>,
+    pub open_browser: (bool, ConfigSource),
 }
 
 impl ResolvedConfig {
@@ -588,6 +656,7 @@ impl ResolvedConfig {
             },
             credentials_path,
             bd_path: find_bd().cloned(),
+            open_browser: resolve_open_browser(),
         }
     }
 
@@ -609,7 +678,22 @@ impl ResolvedConfig {
                 &self.dolt_password.checked,
             ),
             format_bd_line(self.bd_path.as_deref()),
+            format_browser_line(&self.open_browser),
         ]
+    }
+}
+
+/// Строка про автооткрытие браузера: решение плюс причина. Не warn — оба
+/// исхода штатные.
+fn format_browser_line(decision: &(bool, ConfigSource)) -> SettingLine {
+    let (open, source) = decision;
+    SettingLine {
+        text: format!(
+            "open browser: {} ({})",
+            if *open { "yes" } else { "no" },
+            describe_source(source)
+        ),
+        warn: false,
     }
 }
 
@@ -622,6 +706,86 @@ pub fn log_startup_summary(config: &ResolvedConfig) {
         } else {
             tracing::info!("{}", line.text);
         }
+    }
+}
+
+#[cfg(test)]
+mod browser_tests {
+    use super::*;
+
+    /// Флаг перебивает всё остальное, включая интерактивный терминал.
+    #[test]
+    fn cli_flag_wins_over_everything() {
+        let (open, source) = resolve_open_browser_from(true, None, true);
+
+        assert!(!open);
+        assert_eq!(source, ConfigSource::Cli("--no-browser"));
+    }
+
+    #[test]
+    fn env_opt_out_disables_in_an_interactive_terminal() {
+        for value in ["1", "true", "TRUE", "yes", "on", " 1 "] {
+            let (open, source) =
+                resolve_open_browser_from(false, Some(value.to_string()), true);
+
+            assert!(!open, "значение {value:?} должно отключать автооткрытие");
+            assert_eq!(source, ConfigSource::Env("BEADS_WEB_NO_BROWSER"));
+        }
+    }
+
+    /// Пустое или отрицательное значение не считается опт-аутом — иначе
+    /// `BEADS_WEB_NO_BROWSER=0` молча отключал бы браузер, что противоречит
+    /// написанному.
+    #[test]
+    fn negative_env_value_is_not_an_opt_out() {
+        for value in ["0", "false", "no", ""] {
+            let (open, source) =
+                resolve_open_browser_from(false, Some(value.to_string()), true);
+
+            assert!(open, "значение {value:?} не должно отключать автооткрытие");
+            assert_eq!(source, ConfigSource::Default);
+        }
+    }
+
+    /// Главная причина задачи: под pm2 / службой / с редиректом вывода
+    /// stdout не терминал, и вкладка не должна открываться на каждый рестарт.
+    #[test]
+    fn background_start_does_not_open_a_tab() {
+        let (open, source) = resolve_open_browser_from(false, None, false);
+
+        assert!(!open);
+        assert_eq!(source, ConfigSource::Detected("non-interactive stdout"));
+    }
+
+    /// Прежнее поведение для человека, запустившего бинарь руками.
+    #[test]
+    fn interactive_start_still_opens_the_browser() {
+        let (open, source) = resolve_open_browser_from(false, None, true);
+
+        assert!(open);
+        assert_eq!(source, ConfigSource::Default);
+    }
+
+    #[test]
+    fn summary_reports_the_browser_decision() {
+        let line = format_browser_line(&(false, ConfigSource::Detected("non-interactive stdout")));
+
+        assert!(line.text.starts_with("open browser: no"));
+        assert!(line.text.contains("non-interactive stdout"));
+        assert!(!line.warn, "это штатное поведение, не повод для warn");
+    }
+
+    #[test]
+    fn cli_flag_is_detected_anywhere_in_the_argument_list() {
+        let args = ["beads-server", "--no-browser", "--whatever"].map(String::from);
+        assert!(has_no_browser_flag(args));
+
+        let args = ["beads-server"].map(String::from);
+        assert!(!has_no_browser_flag(args));
+
+        // не срабатывать на похожие аргументы
+        let args = ["beads-server", "--no-browsers"].map(String::from);
+        assert!(!has_no_browser_flag(args));
     }
 }
 
@@ -806,6 +970,7 @@ mod report_tests {
             },
             credentials_path: (cred_path(), ConfigSource::Default),
             bd_path: Some(PathBuf::from("C:\\tools\\bd.exe")),
+            open_browser: (false, ConfigSource::Detected("non-interactive stdout")),
         }
     }
 

@@ -219,9 +219,13 @@ async fn main() {
 
     info!("Server starting on http://localhost:{}", port);
 
-    // Open default browser
-    if let Err(e) = open::that(format!("http://localhost:{}", port)) {
-        tracing::warn!("Failed to open browser: {}", e);
+    // Открывается только при интерактивном запуске. Под pm2/службой каждый
+    // рестарт иначе плодит новую вкладку поверх уже открытой (bweb-vqt);
+    // решение и его причина видны в стартовой сводке выше.
+    if resolved.open_browser.0 {
+        if let Err(e) = open::that(format!("http://localhost:{}", port)) {
+            tracing::warn!("Failed to open browser: {}", e);
+        }
     }
 
     // Start the server
