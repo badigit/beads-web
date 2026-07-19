@@ -12,6 +12,12 @@ interface CopyableTextProps {
   /** Text to copy to clipboard (defaults to children text content) */
   copyText: string;
   className?: string;
+  /**
+   * Override for the accessible name (defaults to `Copy ${copyText}`).
+   * Useful when `copyText` is a long value (e.g. a full URL) that would
+   * otherwise make for a noisy aria-label.
+   */
+  label?: string;
 }
 
 /**
@@ -21,7 +27,7 @@ interface CopyableTextProps {
  * Events are stopped from propagating: these live inside clickable cards,
  * where bubbling would open the detail panel instead of copying.
  */
-export function CopyableText({ children, copyText, className }: CopyableTextProps) {
+export function CopyableText({ children, copyText, className, label }: CopyableTextProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(async (e: React.MouseEvent | React.KeyboardEvent) => {
@@ -54,7 +60,7 @@ export function CopyableText({ children, copyText, className }: CopyableTextProp
     <span
       role="button"
       tabIndex={0}
-      aria-label={`Copy ${copyText}`}
+      aria-label={label ?? `Copy ${copyText}`}
       onClick={handleCopy}
       onKeyDown={handleKeyDown}
       className={cn(

@@ -114,7 +114,7 @@ describe('GlobalSearch', () => {
 
     fireEvent.keyDown(input, { key: 'Enter' });
 
-    expect(push).toHaveBeenCalledWith('/project?id=p1');
+    expect(push).toHaveBeenCalledWith('/project?id=p1&bead=bweb-489.12.2');
   });
 
   it('does not navigate when the hit has no local project', async () => {

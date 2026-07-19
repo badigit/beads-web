@@ -7,6 +7,7 @@ import {
   Calendar,
   Circle,
   Layers,
+  Link,
   Link2,
   Plus,
   Square,
@@ -25,6 +26,7 @@ import { Button } from "@/components/ui/button";
 import { usePRSettings } from "@/hooks/use-pr-settings";
 import { toast } from "@/hooks/use-toast";
 import * as api from "@/lib/api";
+import { buildBeadShareUrl } from "@/lib/bead-link";
 import {
   formatShortDate,
   formatStatus,
@@ -45,6 +47,8 @@ export interface BeadDetailProps {
   onOpenChange: (open: boolean) => void;
   children?: React.ReactNode;
   projectPath?: string;
+  /** Project id from the board URL (`?id=`), used to build the shareable bead link. */
+  projectId?: string | null;
   allBeads?: Bead[];
   onChildClick?: (child: Bead) => void;
   onCleanup?: () => void;
@@ -63,6 +67,7 @@ export function BeadDetail({
   onOpenChange,
   children,
   projectPath,
+  projectId,
   allBeads,
   onChildClick,
   onCleanup,
@@ -82,6 +87,13 @@ export function BeadDetail({
   const prEnabled = prSettings.enabled;
   const isReadOnly = !projectPath;
   const isDolt = projectPath ? isDoltProject(projectPath) : false;
+
+  // Shareable deep link to this bead's detail card (`/project?id=...&bead=...`).
+  // Built with the actual page origin so a copied link works from any tab.
+  const shareUrl = useMemo(() => {
+    if (!projectId || typeof window === "undefined") return null;
+    return buildBeadShareUrl(window.location.origin, projectId, bead.id);
+  }, [projectId, bead.id]);
 
   const handleSaveTitle = useCallback(async (newTitle: string) => {
     if (!projectPath) return;
@@ -243,6 +255,14 @@ export function BeadDetail({
               <CopyableText copyText={bead.id} className="inline-block max-w-[200px] truncate align-bottom">
                 {bead.id}
               </CopyableText>
+              {shareUrl && (
+                <>
+                  {" "}
+                  <CopyableText copyText={shareUrl} label="Copy link to this bead">
+                    <Link className="size-3" aria-hidden="true" />
+                  </CopyableText>
+                </>
+              )}
             </p>
 
             {/* Title */}
