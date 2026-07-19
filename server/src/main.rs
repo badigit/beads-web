@@ -3,6 +3,7 @@
 //! An Axum-based HTTP server that serves the beads-kanban-ui frontend
 //! and provides API endpoints for backend functionality.
 
+mod config;
 mod db;
 mod dolt;
 mod process;
@@ -17,7 +18,6 @@ use axum::{
     Router,
 };
 use rust_embed::Embed;
-use std::env;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, Level};
@@ -92,10 +92,7 @@ async fn main() {
         .expect("Failed to set tracing subscriber");
 
     // Parse port from environment variable, default to 3008
-    let port: u16 = env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(3008);
+    let (port, _) = config::resolve_server_port();
 
     // Configure CORS for development
     let cors = CorsLayer::new()

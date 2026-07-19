@@ -24,22 +24,14 @@ struct DoltConnectConfig {
 }
 
 impl DoltConnectConfig {
+    /// Resolves connection parameters via `crate::config` -- the single
+    /// in-process source of truth for Dolt env vars / credentials-file /
+    /// legacy files (see `config.rs` module docs for the full source chain).
     fn from_env() -> Self {
-        let host = std::env::var("BEADS_DOLT_SERVER_HOST")
-            .or_else(|_| std::env::var("DOLT_HOST"))
-            .unwrap_or_else(|_| "127.0.0.1".to_string());
-        let port = std::env::var("BEADS_DOLT_SERVER_PORT")
-            .or_else(|_| std::env::var("DOLT_PORT"))
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(3307);
-        let user = std::env::var("BEADS_DOLT_SERVER_USER")
-            .or_else(|_| std::env::var("DOLT_USER"))
-            .unwrap_or_else(|_| "root".to_string());
-        let password = std::env::var("BEADS_DOLT_PASSWORD")
-            .or_else(|_| std::env::var("DOLT_PASSWORD"))
-            .ok()
-            .filter(|p| !p.is_empty());
+        let (host, _) = crate::config::resolve_dolt_host();
+        let (port, _) = crate::config::resolve_dolt_port();
+        let (user, _) = crate::config::resolve_dolt_user();
+        let (password, _) = crate::config::resolve_dolt_password(&host, port);
         Self {
             host,
             port,

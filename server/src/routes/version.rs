@@ -351,7 +351,8 @@ pub async fn perform_update(
     );
 
     // 5. Generate and spawn updater script
-    let port = std::env::var("PORT").unwrap_or_else(|_| "3008".to_string());
+    let (port, _) = crate::config::resolve_server_port();
+    let port = port.to_string();
     let pid = std::process::id();
 
     let script_result = if cfg!(windows) {
