@@ -5,7 +5,7 @@ import { FolderOpen, GitPullRequest, Link2, MessageSquare, Check, X, Clock } fro
 import { CopyableText } from "@/components/copyable-text";
 import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/hooks/use-theme";
-import { formatBeadId, formatWorktreePath, isBlocked, truncate } from "@/lib/bead-utils";
+import { formatWorktreePath, isBlocked, truncate } from "@/lib/bead-utils";
 import { cn } from "@/lib/utils";
 import type { Bead, WorktreeStatus, PRStatus, StatusBadgeInfo } from "@/types";
 
@@ -237,8 +237,12 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
         {/* Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <CopyableText copyText={bead.id} className="text-xs text-t-muted font-mono shrink-0 tabular-nums">
-              {formatBeadId(bead.id)}
+            <CopyableText
+              copyText={bead.id}
+              label={`Copy bead id ${bead.id}`}
+              className="text-xs text-t-muted font-mono shrink-0 tabular-nums max-w-[120px] truncate"
+            >
+              {bead.id}
             </CopyableText>
             <span className="text-[13px] font-medium text-t-primary truncate">
               {bead.title}
@@ -303,14 +307,20 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
 
         {/* Property tags row */}
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="theme-badge text-[11px] font-mono px-1.5 py-0.5 bg-surface-overlay text-t-muted">
+          {/* The whole badge is one copy target for the bead id — the "#N"
+              prefix is decoration, copying it alone is useless (bweb-deq). */}
+          <CopyableText
+            copyText={bead.id}
+            label={`Copy bead id ${bead.id}`}
+            className="theme-badge text-[11px] font-mono px-1.5 py-0.5 bg-surface-overlay text-t-muted"
+          >
             {ticketNumber !== undefined && (
               <>
-                <CopyableText copyText={`#${ticketNumber}`}>#{ticketNumber}</CopyableText>{" "}
+                <span>#{ticketNumber}</span>{" "}
               </>
             )}
-            <CopyableText copyText={bead.id}>{formatBeadId(bead.id)}</CopyableText>
-          </span>
+            <span className="inline-block max-w-[120px] truncate align-bottom">{bead.id}</span>
+          </CopyableText>
           {blocked && (
             <span className="theme-badge text-[10px] font-semibold px-1.5 py-0.5 bg-danger/15 text-danger">
               Blocked
@@ -366,17 +376,20 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
         <div className="p-3 space-y-1.5">
           {/* Row 1: ID (left) + Type Badge (right) */}
           <div className="flex items-center justify-between">
-            <div className="text-xs font-mono text-muted-foreground">
+            <CopyableText
+              copyText={bead.id}
+              label={`Copy bead id ${bead.id}`}
+              className="text-xs font-mono text-muted-foreground"
+            >
               {ticketNumber !== undefined && (
-                <CopyableText copyText={`#${ticketNumber}`} className="font-semibold text-foreground">
-                  #{ticketNumber}
-                </CopyableText>
+                <>
+                  <span className="font-semibold text-foreground">#{ticketNumber}</span>{" "}
+                </>
               )}
-              {ticketNumber !== undefined && " "}
-              <CopyableText copyText={bead.id}>
-                {formatBeadId(bead.id)}
-              </CopyableText>
-            </div>
+              <span className="inline-block max-w-[120px] truncate align-bottom">
+                {bead.id}
+              </span>
+            </CopyableText>
             <div className="flex items-center gap-1.5">
               {blocked && (
                 <Badge variant="destructive" appearance="light" size="xs" className="theme-badge">BLOCKED</Badge>

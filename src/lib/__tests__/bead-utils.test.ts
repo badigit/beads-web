@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
 import {
-  formatBeadId,
   formatStatus,
   formatShortDate,
   formatWorktreePath,
@@ -9,26 +8,6 @@ import {
   truncate,
   isBlocked,
 } from '@/lib/bead-utils';
-
-describe('formatBeadId', () => {
-  it('uppercases BD- prefix IDs', () => {
-    expect(formatBeadId('bd-abc')).toBe('BD-ABC');
-    expect(formatBeadId('BD-ABC')).toBe('BD-ABC');
-  });
-
-  it('truncates long BD- IDs to maxLen', () => {
-    expect(formatBeadId('bd-abcdefghijklm', 6)).toBe('BD-hijklm');
-  });
-
-  it('extracts last segment for non-BD IDs', () => {
-    expect(formatBeadId('beads-kanban-ui-abc123')).toBe('BD-abc123');
-  });
-
-  it('uses maxLen param for short ID', () => {
-    expect(formatBeadId('project-abcdefgh', 8)).toBe('BD-abcdefgh');
-    expect(formatBeadId('project-abcdefgh', 4)).toBe('BD-abcd');
-  });
-});
 
 describe('formatStatus', () => {
   it('formats known statuses', () => {

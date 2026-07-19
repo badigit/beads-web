@@ -25,8 +25,15 @@ use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
 /// Embedded static files from the Next.js build output.
+///
+/// The path is not hardcoded to `../out/` because that directory is an
+/// untracked build artifact and is therefore absent from a fresh `git
+/// worktree` — which made this crate fail to compile there at all, blocking the
+/// pre-commit `cargo clippy` on any `server/` change. `build.rs` resolves the
+/// directory (local export, main checkout's export, or an empty placeholder)
+/// and hands it over in `BEADS_WEB_FRONTEND_DIR`.
 #[derive(Embed)]
-#[folder = "../out/"]
+#[folder = "$BEADS_WEB_FRONTEND_DIR"]
 struct Assets;
 
 /// Serves embedded static files, with fallback to index.html for SPA routing.

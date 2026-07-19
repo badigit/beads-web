@@ -97,3 +97,6 @@ beads-web-darwin-*
 .agents/
 .codex/
 start_dev.cmd
+
+# Beads: runtime-каталог прокси (требуется bd 1.1.0)
+.beads/proxieddb/

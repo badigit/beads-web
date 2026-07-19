@@ -1,6 +1,7 @@
 param(
   [int]$Port = 3056,
-  [string]$ProjectRoot = "C:\Users\Dee\GitHub"
+  [string]$ProjectRoot = "C:\Users\Dee\GitHub",
+  [switch]$KillAll
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,13 +35,24 @@ $env:BEADS_DOLT_SERVER_USER = "beads"
 # открылась бы и так. Оставлено явно, чтобы намерение читалось (bweb-vqt).
 $env:BEADS_WEB_NO_BROWSER = "1"
 
-Get-Process -Name "beads-web-win-x64", "beads-web-win-x64-direct", "beads-server" -ErrorAction SilentlyContinue |
-  Stop-Process -Force -ErrorAction SilentlyContinue
-Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
-  Where-Object { $_.CommandLine -like '*api-proxy.mjs*' } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+# Port-scoped cleanup: only touches whatever is actually listening on $Port.
+# This is the default and normally sufficient.
 Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue |
   ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+
+# Opt-in wide cleanup: kills EVERY beads-web/node-proxy process on the machine by
+# name, regardless of which port it's using. Exists only to catch a stuck instance
+# that has crashed/hung without an open listening socket, so the port-scoped
+# Stop-Process above wouldn't find it. NOT scoped to $Port -- do not enable by
+# default. Bug bweb-0vq: running this script with -Port 3095 killed the user's
+# live pm2-managed instance on 3056 twice (same binary name, different port).
+if ($KillAll) {
+  Get-Process -Name "beads-web-win-x64", "beads-web-win-x64-direct", "beads-server" -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+  Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*api-proxy.mjs*' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
 
 Start-Process -FilePath $binary -WorkingDirectory $repoRoot -WindowStyle Hidden `
   -RedirectStandardOutput $outLog -RedirectStandardError $errLog

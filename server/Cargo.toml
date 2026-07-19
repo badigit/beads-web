@@ -11,7 +11,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-rust-embed = "8"
+# interpolate-folder-path: the frontend directory is resolved by build.rs and
+# passed in through BEADS_WEB_FRONTEND_DIR (see the #[folder] attribute in main.rs).
+rust-embed = { version = "8", features = ["interpolate-folder-path"] }
 open = "5"
 mime_guess = "2"
 notify = "6"

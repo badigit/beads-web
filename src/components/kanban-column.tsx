@@ -1,6 +1,6 @@
 "use client";
 
-import { PackageOpen } from "lucide-react";
+import { CornerDownRight, PackageOpen } from "lucide-react";
 
 import { BeadCard } from "@/components/bead-card";
 import { EpicCard } from "@/components/epic-card";
@@ -36,6 +36,13 @@ export interface KanbanColumnProps {
   projectPath?: string;
   /** Callback after data changes (to refresh board) */
   onUpdate?: () => void;
+  /**
+   * Show a parent breadcrumb above cards that have a parent.
+   * Set while the board is in flat search mode, where matching children and
+   * grandchildren are surfaced as standalone cards and would otherwise lose
+   * their hierarchy context.
+   */
+  showParentBreadcrumb?: boolean;
 }
 
 /**
@@ -115,6 +122,7 @@ export function KanbanColumn({
   onNavigateToDependency,
   projectPath,
   onUpdate,
+  showParentBreadcrumb = false,
 }: KanbanColumnProps) {
   return (
     <div
@@ -143,26 +151,20 @@ export function KanbanColumn({
         <div className="space-y-3">
           {beads.map((bead) => {
             // Render EpicCard for epics, BeadCard for standalone tasks
-            if (isEpic(bead)) {
-              return (
-                <EpicCard
-                  key={bead.id}
-                  epic={bead}
-                  allBeads={allBeads}
-                  ticketNumber={ticketNumbers?.get(bead.id)}
-                  isSelected={selectedBeadId === bead.id}
-                  onSelect={onSelectBead}
-                  onChildClick={onChildClick ?? onSelectBead}
-                  onNavigateToDependency={onNavigateToDependency}
-                  projectPath={projectPath}
-                  onUpdate={onUpdate}
-                />
-              );
-            }
-
-            return (
+            const card = isEpic(bead) ? (
+              <EpicCard
+                epic={bead}
+                allBeads={allBeads}
+                ticketNumber={ticketNumbers?.get(bead.id)}
+                isSelected={selectedBeadId === bead.id}
+                onSelect={onSelectBead}
+                onChildClick={onChildClick ?? onSelectBead}
+                onNavigateToDependency={onNavigateToDependency}
+                projectPath={projectPath}
+                onUpdate={onUpdate}
+              />
+            ) : (
               <BeadCard
-                key={bead.id}
                 bead={bead}
                 allBeads={allBeads}
                 ticketNumber={ticketNumbers?.get(bead.id)}
@@ -170,6 +172,26 @@ export function KanbanColumn({
                 onSelect={onSelectBead}
               />
             );
+
+            // In flat search mode a matching child/grandchild gets its own
+            // card, detached from its epic — the breadcrumb keeps that
+            // hierarchy context visible.
+            if (showParentBreadcrumb && bead.parent_id) {
+              return (
+                <div key={bead.id} className="space-y-1">
+                  <div
+                    className="flex items-center gap-1 px-1 text-[10px] text-t-muted"
+                    title={`Child of ${bead.parent_id}`}
+                  >
+                    <CornerDownRight className="size-3 shrink-0" aria-hidden="true" />
+                    <span className="font-mono truncate">in {bead.parent_id}</span>
+                  </div>
+                  {card}
+                </div>
+              );
+            }
+
+            return <div key={bead.id}>{card}</div>;
           })}
           {beads.length === 0 && (
             <div className="flex flex-col items-center justify-center py-8 border-2 border-dashed border-b-strong/50 rounded-lg">

@@ -28,6 +28,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useBeadDetail } from "@/hooks/use-bead-detail";
 import { useBeadFilters } from "@/hooks/use-bead-filters";
+import { useBeadUrlSync } from "@/hooks/use-bead-url-sync";
 import { useBeads } from "@/hooks/use-beads";
 import { useGitHubStatus } from "@/hooks/use-github-status";
 import { useKeyboardNavigation } from "@/hooks/use-keyboard-navigation";
@@ -37,6 +38,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { useWorktreeStatuses } from "@/hooks/use-worktree-statuses";
 import { isBlocked } from "@/lib/bead-utils";
 import { getUnknownStatusBeads, getUnknownStatusNames } from "@/lib/beads-parser";
+import { isFlatSearchMode, selectBoardBeads, type IssueTypeFilter } from "@/lib/board-beads";
 import { isDoltProject } from "@/lib/utils";
 import type { Bead, BeadStatus } from "@/types";
 
@@ -50,11 +52,6 @@ const COLUMNS: { status: BeadStatus; title: string }[] = [
   { status: "inreview", title: "In Review" },
   { status: "closed", title: "Closed" },
 ];
-
-/**
- * Issue type filter options
- */
-type IssueTypeFilter = "all" | "epics" | "tasks";
 
 /**
  * Main Kanban board component with 4 columns, search, filter, and keyboard navigation
@@ -90,6 +87,7 @@ export default function KanbanBoard() {
     clearFilters,
     hasActiveFilters,
     availableOwners,
+    debouncedSearch,
   } = useBeadFilters(beads, ticketNumbers, 300);
 
   // Issue type filter state (epics vs tasks)
@@ -166,21 +164,20 @@ export default function KanbanBoard() {
     worktreeEnabled ? beadIds : []
   );
 
+  // Flat search mode: while a search is active, matches at any depth get their
+  // own card (see selectBoardBeads). Keyed off the debounced term so the mode
+  // flips in sync with the filtering itself, not with the raw input.
+  const flatSearch = isFlatSearchMode(debouncedSearch);
+
   /**
-   * Filter to only top-level beads (no parent_id)
-   * Then apply issue type filter (epics vs tasks)
-   * Child tasks should not appear in columns - they appear inside epic cards
+   * Beads that get their own card on the board.
+   * No search -> top-level only (children live inside epic cards).
+   * Active search -> every match, at any depth (bweb-emj).
    */
-  const topLevelBeads = useMemo(() => {
-    const topLevel = filteredBeads.filter(b => !b.parent_id);
-
-    // Apply issue type filter
-    if (typeFilter === "all") return topLevel;
-    if (typeFilter === "epics") return topLevel.filter(b => b.issue_type === "epic");
-    if (typeFilter === "tasks") return topLevel.filter(b => b.issue_type !== "epic");
-
-    return topLevel;
-  }, [filteredBeads, typeFilter]);
+  const topLevelBeads = useMemo(
+    () => selectBoardBeads(filteredBeads, typeFilter, debouncedSearch),
+    [filteredBeads, typeFilter, debouncedSearch]
+  );
 
   /**
    * Group top-level beads by status for columns.
@@ -214,6 +211,14 @@ export default function KanbanBoard() {
     handleDetailOpenChange,
     navigateToBead,
   } = useBeadDetail(beads);
+
+  // Two-way binding with the `?bead=` URL param: opens the deep-linked bead
+  // once beads have loaded, and keeps the address bar in step with the panel.
+  // `beads` is only meaningful once the project resolved: until then the path
+  // passed to useBeads is "", which yields an empty list with loading already
+  // off — indistinguishable from "this bead doesn't exist" without this gate.
+  const beadsReady = !projectLoading && !beadsLoading;
+  useBeadUrlSync({ projectId, beads, beadsReady, detailBead, openBead });
 
   // Ref for search input (keyboard navigation)
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -402,6 +407,7 @@ export default function KanbanBoard() {
                 onNavigateToDependency={navigateToBead}
                 projectPath={project?.path}
                 onUpdate={refreshBeads}
+                showParentBreadcrumb={flatSearch}
               />
             ))}
           </div>
@@ -418,6 +424,7 @@ export default function KanbanBoard() {
           open={isDetailOpen}
           onOpenChange={handleDetailOpenChange}
           projectPath={project?.path ?? ""}
+          projectId={projectId}
           allBeads={beads}
           onChildClick={openBead}
           onUpdate={refreshBeads}
