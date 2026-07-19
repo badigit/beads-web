@@ -77,6 +77,7 @@ export default function KanbanBoard() {
     beads,
     ticketNumbers,
     isLoading: beadsLoading,
+    isRevalidating: beadsRevalidating,
     error: beadsError,
     refresh: refreshBeads,
   } = useBeads(project?.path ?? "");
@@ -303,6 +304,7 @@ export default function KanbanBoard() {
           </h1>
           <span className="font-mono text-xs text-t-muted uppercase tracking-widest">
             {beads.length} beads // {beads.filter(b => b.issue_type === 'epic').length} epics // {beads.filter(b => isBlocked(b, beads)).length} blocked
+            {beadsRevalidating && ' // syncing'}
           </span>
         </div>
       ) : (
@@ -323,6 +325,14 @@ export default function KanbanBoard() {
           >
             <EllipsisVertical className="h-3.5 w-3.5" />
           </Button>
+          {/* Background refresh hint — the board stays interactive meanwhile.
+              aria-hidden because it can toggle every poll cycle and is not
+              worth announcing. */}
+          {beadsRevalidating && (
+            <span aria-hidden="true" className="text-xs text-muted-foreground">
+              Updating…
+            </span>
+          )}
         </div>
       )}
 
