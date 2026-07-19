@@ -326,31 +326,24 @@ export interface PRFilesResponse {
 // ============================================================================
 
 /**
- * Memory entry type: learned insight or investigation context
- */
-export type MemoryType = "learned" | "investigation";
-
-/**
- * A single knowledge base entry from knowledge.jsonl
+ * A single bd memory (`bd remember` / `bd memories`), stored in the project's
+ * Dolt database and injected into agent sessions at `bd prime`.
+ *
+ * bd memories carry only a key and free-text content — no type, tags,
+ * timestamp, or bead association. The removed fields belonged to the legacy
+ * `.beads/memory/knowledge.jsonl` format, which nothing has written since
+ * January 2026 (see bweb-30u / bweb-1vr).
  */
 export interface MemoryEntry {
   key: string;
-  type: MemoryType;
   content: string;
-  source: string;
-  tags: string[];
-  ts: number;
-  bead: string;
 }
 
 /**
- * Aggregate stats for the knowledge base
+ * Aggregate stats for a project's memories
  */
 export interface MemoryStats {
   total: number;
-  learned: number;
-  investigation: number;
-  archived: number;
 }
 
 /**
