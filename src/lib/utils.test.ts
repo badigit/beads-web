@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { deriveBeadPrefix, isDoltProject } from './utils';
+import { deriveBeadPrefix, doltDatabase, isDoltProject } from './utils';
 
 describe('isDoltProject', () => {
   it('returns true for dolt:// paths', () => {
@@ -14,6 +14,33 @@ describe('isDoltProject', () => {
   it('returns false for null/undefined', () => {
     expect(isDoltProject(null)).toBe(false);
     expect(isDoltProject(undefined)).toBe(false);
+  });
+});
+
+describe('doltDatabase', () => {
+  it('extracts the database name from a dolt:// path', () => {
+    expect(doltDatabase('dolt://beads_web')).toBe('beads_web');
+  });
+
+  it('keeps hyphenated database names intact', () => {
+    expect(doltDatabase('dolt://beads_ai-photo-factory')).toBe(
+      'beads_ai-photo-factory'
+    );
+  });
+
+  it('drops a trailing slash', () => {
+    expect(doltDatabase('dolt://beads_web/')).toBe('beads_web');
+  });
+
+  it('returns null for filesystem projects', () => {
+    expect(doltDatabase('M:/repos/foo')).toBeNull();
+  });
+
+  it('returns null for empty, null and prefix-only values', () => {
+    expect(doltDatabase('')).toBeNull();
+    expect(doltDatabase(null)).toBeNull();
+    expect(doltDatabase(undefined)).toBeNull();
+    expect(doltDatabase('dolt://')).toBeNull();
   });
 });
 

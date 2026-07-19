@@ -69,6 +69,15 @@ export interface WatchEvent {
 }
 
 /**
+ * Revision change event for a `dolt://` project, emitted when the database's
+ * working-set hash moves.
+ */
+export interface DoltRevisionEvent {
+  database: string;
+  revision: string;
+}
+
+/**
  * Helper for fetch with error handling
  */
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
@@ -572,5 +581,36 @@ export const watch = {
     eventSource.onmessage = (e) => onEvent(JSON.parse(e.data));
     eventSource.onerror = () => eventSource.close();
     return () => eventSource.close();
+  },
+
+  /**
+   * Subscribes to revision changes of a `dolt://` project's database.
+   *
+   * Unlike {@link watch.beads}, transient errors do not close the stream:
+   * `EventSource` reconnects on its own with backoff, and closing it in
+   * `onerror` would turn a blip into a permanently dead subscription. The
+   * caller is told about connection state instead and decides what to show.
+   */
+  doltRevision: (
+    database: string,
+    onEvent: (event: DoltRevisionEvent) => void,
+    onStateChange?: (connected: boolean) => void
+  ) => {
+    const eventSource = new EventSource(
+      `${API_BASE}/api/dolt/watch?database=${encodeURIComponent(database)}`
+    );
+    eventSource.onopen = () => onStateChange?.(true);
+    eventSource.onmessage = (e) => {
+      try {
+        onEvent(JSON.parse(e.data));
+      } catch {
+        // Keep-alive comments and malformed frames must not kill the stream.
+      }
+    };
+    eventSource.onerror = () => onStateChange?.(false);
+    return () => {
+      eventSource.close();
+      onStateChange?.(false);
+    };
   },
 };

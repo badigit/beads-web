@@ -13,6 +13,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 
+import { useDoltWatcher } from "@/hooks/use-dolt-watcher";
 import { useFileWatcher } from "@/hooks/use-file-watcher";
 import {
   getCachedBeads,
@@ -26,7 +27,7 @@ import {
   groupBeadsByStatus,
   assignTicketNumbers,
 } from "@/lib/beads-parser";
-import { isDoltProject } from "@/lib/utils";
+import { doltDatabase } from "@/lib/utils";
 import type { Bead, BeadStatus } from "@/types";
 
 /** Options for a (re)load of the bead set. */
@@ -271,14 +272,10 @@ export function useBeads(projectPath: string): UseBeadsResult {
     }
   }, [watchError, error]);
 
-  // Polling for dolt:// projects (no file watcher available)
-  useEffect(() => {
-    if (!projectPath || !isDoltProject(projectPath)) return;
-
-    const intervalId = setInterval(revalidate, 15_000);
-
-    return () => clearInterval(intervalId);
-  }, [projectPath, revalidate]);
+  // Live updates for dolt:// projects. There is no file to watch, so the server
+  // watches the database's revision instead and only notifies on real changes —
+  // replacing a 15s poll that refetched every bead whether or not anything moved.
+  useDoltWatcher(doltDatabase(projectPath), revalidate);
 
   return {
     beads: state.beads,
