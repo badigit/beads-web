@@ -153,6 +153,24 @@ if [ -n "$RUST_FILES" ] || [ "$HAS_CARGO_TOML" -eq 1 ]; then
   if ! command -v cargo >/dev/null 2>&1; then
     echo "Warning: cargo not found, skipping Rust checks" >&2
   else
+    # Share one cargo target across worktrees: a fresh worktree would otherwise
+    # rebuild everything from scratch (~20 min) just to run clippy. git-common-dir
+    # points at the main repo's .git and equals git-dir in a normal checkout.
+    if [ -z "${CARGO_TARGET_DIR:-}" ]; then
+      COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null)"
+      if [ -n "$COMMON_DIR" ]; then
+        case "$COMMON_DIR" in
+          /*|[A-Za-z]:*) ;;
+          *) COMMON_DIR="$(git rev-parse --show-toplevel)/$COMMON_DIR" ;;
+        esac
+        MAIN_REPO_ROOT="$(dirname "$COMMON_DIR")"
+        if [ -d "$MAIN_REPO_ROOT/server" ]; then
+          CARGO_TARGET_DIR="$MAIN_REPO_ROOT/server/target"
+          export CARGO_TARGET_DIR
+        fi
+      fi
+    fi
+
     # clippy can be missing on the default toolchain while another installed
     # toolchain has it — on Windows the default is often msvc, which this
     # project cannot even build (no MSVC linker; we build the gnu target).

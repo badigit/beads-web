@@ -10,6 +10,18 @@ The primary Windows deployment uses a single embedded frontend/backend binary an
 
 The build produces `bin\beads-web-win-x64-direct.exe`. The upstream `bin\beads-web-win-x64.exe` remains unchanged for rollback.
 
+Flags: `-SkipTests` skips `cargo test` (pre-commit runs it anyway), `-NoRestart` leaves the pm2 instance stopped. The script installs npm dependencies only when `package-lock.json` changed, shares one `CARGO_TARGET_DIR` across worktrees (so a fresh worktree does not rebuild Rust from scratch), and stops the running pm2 instance before replacing the binary — Windows keeps a running `.exe` locked.
+
+## Frontend-only changes
+
+Rebuilding the binary is only needed because `rust-embed` bakes `out/` into it. While iterating on UI, skip that loop:
+
+```powershell
+npm run dev        # http://localhost:3007
+```
+
+The dev server proxies `/api/*` to the running backend (`BEADS_API_PORT`, default 3056), so the UI runs against live central-Dolt data and reloads on save.
+
 ## Start
 
 ```powershell
