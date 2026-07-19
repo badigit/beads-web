@@ -237,9 +237,9 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
         {/* Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-t-muted font-mono shrink-0 tabular-nums">
+            <CopyableText copyText={bead.id} className="text-xs text-t-muted font-mono shrink-0 tabular-nums">
               {formatBeadId(bead.id)}
-            </span>
+            </CopyableText>
             <span className="text-[13px] font-medium text-t-primary truncate">
               {bead.title}
             </span>
@@ -304,7 +304,12 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
         {/* Property tags row */}
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="theme-badge text-[11px] font-mono px-1.5 py-0.5 bg-surface-overlay text-t-muted">
-            {ticketNumber !== undefined && `#${ticketNumber} `}{formatBeadId(bead.id)}
+            {ticketNumber !== undefined && (
+              <>
+                <CopyableText copyText={`#${ticketNumber}`}>#{ticketNumber}</CopyableText>{" "}
+              </>
+            )}
+            <CopyableText copyText={bead.id}>{formatBeadId(bead.id)}</CopyableText>
           </span>
           {blocked && (
             <span className="theme-badge text-[10px] font-semibold px-1.5 py-0.5 bg-danger/15 text-danger">
