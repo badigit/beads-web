@@ -344,18 +344,80 @@ fn extract_json_array(output: &str) -> Result<&str, String> {
     }
 }
 
-/// Computes bead counts from a slice of beads and upserts them into the
-/// local SQLite cache so the home page can render donut charts instantly.
+/// Per-status bead totals for the four kanban columns the home page renders.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct BeadCounts {
+    pub open: i64,
+    pub in_progress: i64,
+    pub inreview: i64,
+    pub closed: i64,
+}
+
+/// The kanban column a raw `bd` status belongs to, or `None` when the bead is
+/// hidden from the board entirely.
 ///
-/// Cache writes are best-effort — failures are logged but never propagated
-/// to the `/api/beads` response. The `project_path` is looked up against
-/// the `projects` table; if no matching project exists (e.g. `dolt://`
-/// paths or paths unknown to the local DB), the cache is skipped.
+/// This mirrors `STATUS_MAP` in `src/types/index.ts`. The home page used to
+/// download every bead and fold the statuses client-side; now the folding
+/// happens here, so the two tables MUST stay in sync or the donut and the
+/// board would disagree. Unknown statuses land in `open`, matching the
+/// frontend's "unknown status → open column + warning badge" behavior.
+fn status_column(raw_status: &str) -> Option<&'static str> {
+    match raw_status {
+        "tombstone" => None,
+        "in_progress" | "hooked" => Some("in_progress"),
+        "inreview" => Some("inreview"),
+        "closed" | "done" | "resolved" => Some("closed"),
+        // "open", "pending", "blocked", "deferred" and anything unrecognized.
+        _ => Some("open"),
+    }
+}
+
+impl BeadCounts {
+    /// Adds `count` beads carrying `raw_status` to the matching column.
+    fn add(&mut self, raw_status: &str, count: i64) {
+        match status_column(raw_status) {
+            Some("in_progress") => self.in_progress += count,
+            Some("inreview") => self.inreview += count,
+            Some("closed") => self.closed += count,
+            Some(_) => self.open += count,
+            None => {}
+        }
+    }
+}
+
+/// Folds `(status, count)` aggregate rows — as produced by
+/// `SELECT status, COUNT(*) … GROUP BY status` — into column totals.
+fn counts_from_status_rows<S: AsRef<str>>(rows: &[(S, i64)]) -> BeadCounts {
+    let mut counts = BeadCounts::default();
+    for (status, count) in rows {
+        counts.add(status.as_ref(), *count);
+    }
+    counts
+}
+
+/// Folds a materialized bead list into column totals. Used by the tiers that
+/// have no cheap aggregate (bd CLI, JSONL) and must count in memory.
+fn counts_from_beads(beads: &[Bead]) -> BeadCounts {
+    let mut counts = BeadCounts::default();
+    for bead in beads {
+        counts.add(&bead.status, 1);
+    }
+    counts
+}
+
+/// Upserts bead counts into the local SQLite cache so the home page can render
+/// donut charts instantly on the next cold load (`/api/projects` returns them
+/// as `cachedCounts`).
+///
+/// Cache writes are best-effort — failures are logged but never propagated to
+/// the response. The `project_path` is looked up against the `projects` table;
+/// if no matching project exists (e.g. `dolt://` paths or paths unknown to the
+/// local DB), the cache is skipped.
 fn upsert_counts_cache(
     db: &Database,
     project_path: &str,
     data_source: &str,
-    beads: &[Bead],
+    counts: &BeadCounts,
 ) {
     let project = match db.get_project_by_path(project_path) {
         Ok(Some(p)) => p,
@@ -372,30 +434,16 @@ fn upsert_counts_cache(
         }
     };
 
-    let mut open = 0i64;
-    let mut in_progress = 0i64;
-    let mut inreview = 0i64;
-    let mut closed = 0i64;
-    for bead in beads {
-        match bead.status.as_str() {
-            "open" => open += 1,
-            "in_progress" => in_progress += 1,
-            "inreview" => inreview += 1,
-            "closed" => closed += 1,
-            _ => {}
-        }
-    }
-
-    let counts = CachedCounts {
-        open,
-        in_progress,
-        inreview,
-        closed,
+    let cached = CachedCounts {
+        open: counts.open,
+        in_progress: counts.in_progress,
+        inreview: counts.inreview,
+        closed: counts.closed,
         data_source: Some(data_source.to_string()),
         updated_at: Utc::now().to_rfc3339(),
     };
 
-    if let Err(e) = db.upsert_cached_counts(&project.id, &counts) {
+    if let Err(e) = db.upsert_cached_counts(&project.id, &cached) {
         tracing::warn!(
             "Failed to upsert cached counts for project {}: {}",
             project.id,
@@ -531,16 +579,13 @@ pub async fn read_beads(
 
     // Direct Dolt read for dolt:// paths (no filesystem needed)
     if let Some(db_name) = path.strip_prefix(DOLT_PATH_PREFIX) {
-        if !dolt_manager.is_available() && !dolt_manager.check_server().await {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({ "error": "Dolt server is not running" })),
-            );
+        if let Err(err) = ensure_dolt_online(&dolt_manager).await {
+            return err;
         }
         return match dolt_manager.read_beads(db_name).await {
             Ok(beads) => {
                 let beads = post_process_beads(beads);
-                upsert_counts_cache(&db, &path, "dolt-direct", &beads);
+                upsert_counts_cache(&db, &path, "dolt-direct", &counts_from_beads(&beads));
                 (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": "dolt-direct" })))
             }
             Err(e) => (
@@ -552,57 +597,126 @@ pub async fn read_beads(
 
     let project_path = PathBuf::from(&path);
 
+    match read_beads_cascade(
+        &dolt_manager,
+        &path,
+        &project_path,
+        params.updated_after.as_deref(),
+    )
+    .await
+    {
+        Ok(BeadsRead { beads, source }) => {
+            upsert_counts_cache(&db, &path, source, &counts_from_beads(&beads));
+            (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": source })))
+        }
+        Err(err) => err,
+    }
+}
+
+/// Error response returned by the shared bead-source helpers.
+type RouteError = (StatusCode, Json<serde_json::Value>);
+
+/// Beads resolved through the fallback cascade, plus the tier they came from.
+struct BeadsRead {
+    beads: Vec<Bead>,
+    source: &'static str,
+}
+
+fn error_response(status: StatusCode, message: impl Into<String>) -> RouteError {
+    (
+        status,
+        Json(serde_json::json!({ "error": message.into() })),
+    )
+}
+
+/// Returns an error response unless the central Dolt server answers.
+async fn ensure_dolt_online(dolt_manager: &DoltManager) -> Result<(), RouteError> {
+    if dolt_manager.is_available() || dolt_manager.check_server().await {
+        return Ok(());
+    }
+    Err(error_response(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Dolt server is not running",
+    ))
+}
+
+/// Validates a filesystem project path and returns its `.beads` directory.
+fn resolve_beads_dir(project_path: &Path) -> Result<PathBuf, RouteError> {
     // Security: Validate path is within allowed directories
-    if let Err(e) = validate_path_security(&project_path) {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": e })),
-        );
+    if let Err(e) = validate_path_security(project_path) {
+        return Err(error_response(StatusCode::FORBIDDEN, e));
     }
 
-    // Check that project has a .beads directory
     let beads_dir = project_path.join(".beads");
     if !beads_dir.exists() {
-        return (
+        return Err(error_response(
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "No .beads directory found at the specified path" })),
-        );
+            "No .beads directory found at the specified path",
+        ));
+    }
+    Ok(beads_dir)
+}
+
+/// Resolves a reachable per-project Dolt server (Tier 0) for a project.
+///
+/// Returns `(port, db_name)` when `.beads` points at a port that is actually
+/// listening and a beads database can be named for it. The TCP probe keeps a
+/// dead port file from costing a slow SQL timeout.
+async fn resolve_project_dolt(beads_dir: &Path, project_path: &Path) -> Option<(u16, String)> {
+    let port = resolve_dolt_port(beads_dir)?;
+
+    let port_alive = tokio::time::timeout(
+        Duration::from_millis(500),
+        tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)),
+    )
+    .await
+    .map(|r| r.is_ok())
+    .unwrap_or(false);
+
+    if !port_alive {
+        tracing::debug!("Port {} not responding, skipping Tier 0 SQL", port);
+        return None;
     }
 
-    // Tier 0: Try per-project Dolt server via port file or log
-    if let Some(port) = resolve_dolt_port(&beads_dir) {
-        // Quick TCP probe: skip Tier 0 if port is dead (avoids slow SQL timeout)
-        let port_alive = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)),
-        ).await.map(|r| r.is_ok()).unwrap_or(false);
+    // Try known db name first, then discover via SHOW DATABASES
+    let db_name = match dolt::database_name_for_project(project_path) {
+        Some(name) => Some(name),
+        None => {
+            tracing::info!("No db name from metadata for port {}, discovering...", port);
+            dolt::discover_database_on_port(port).await.ok()
+        }
+    }?;
 
-        if port_alive {
-            // Try known db name first, then discover via SHOW DATABASES
-            let db_name = match dolt::database_name_for_project(&project_path) {
-                Some(name) => Some(name),
-                None => {
-                    tracing::info!("No db name from metadata for port {}, discovering...", port);
-                    dolt::discover_database_on_port(port).await.ok()
-                }
-            };
+    Some((port, db_name))
+}
 
-            if let Some(db_name) = db_name {
-                tracing::info!("Trying per-project Dolt server on port {} for db {}", port, db_name);
-                match dolt::read_beads_on_port(port, &db_name).await {
-                    Ok(beads) => {
-                        tracing::info!("Read {} beads from per-project Dolt (port {})", beads.len(), port);
-                        let beads = post_process_beads(beads);
-                        upsert_counts_cache(&db, &path, "dolt-project", &beads);
-                        return (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": "dolt-project" })));
-                    }
-                    Err(e) => {
-                        tracing::warn!("Per-project Dolt server on port {} failed: {}, falling back", port, e);
-                    }
-                }
+/// Reads beads for a filesystem project through the source cascade:
+/// per-project Dolt server → central Dolt SQL → bd CLI → JSONL.
+///
+/// Shared by `/api/beads` and (as the fallback path) `/api/beads/counts`, so
+/// tier selection lives in exactly one place.
+async fn read_beads_cascade(
+    dolt_manager: &DoltManager,
+    path: &str,
+    project_path: &Path,
+    updated_after: Option<&str>,
+) -> Result<BeadsRead, RouteError> {
+    let beads_dir = resolve_beads_dir(project_path)?;
+
+    // Tier 0: per-project Dolt server
+    if let Some((port, db_name)) = resolve_project_dolt(&beads_dir, project_path).await {
+        tracing::info!("Trying per-project Dolt server on port {} for db {}", port, db_name);
+        match dolt::read_beads_on_port(port, &db_name).await {
+            Ok(beads) => {
+                tracing::info!("Read {} beads from per-project Dolt (port {})", beads.len(), port);
+                return Ok(BeadsRead {
+                    beads: post_process_beads(beads),
+                    source: "dolt-project",
+                });
             }
-        } else {
-            tracing::debug!("Port {} not responding, skipping Tier 0 SQL", port);
+            Err(e) => {
+                tracing::warn!("Per-project Dolt server on port {} failed: {}, falling back", port, e);
+            }
         }
     }
 
@@ -611,7 +725,7 @@ pub async fn read_beads(
     // Tier 1: Try Dolt SQL (direct MySQL connection)
     let (beads, source) = 'fallback: {
         if dolt_manager.is_available() {
-            if let Some(db_name) = dolt::database_name_for_project(&project_path) {
+            if let Some(db_name) = dolt::database_name_for_project(project_path) {
                 match dolt_manager.read_beads(&db_name).await {
                     Ok(b) => break 'fallback (b, "dolt-central"),
                     Err(crate::dolt::DoltError::DatabaseNotFound(_)) => {
@@ -626,9 +740,9 @@ pub async fn read_beads(
         }
 
         // Tier 2: Try bd CLI
-        match read_beads_from_cli(&project_path, params.updated_after.as_deref()).await {
+        match read_beads_from_cli(project_path, updated_after).await {
             Ok(b) => {
-                let mode = if params.updated_after.is_some() { "incremental" } else { "full" };
+                let mode = if updated_after.is_some() { "incremental" } else { "full" };
                 tracing::info!("Read {} beads from bd CLI for {} ({})", b.len(), path, mode);
                 break 'fallback (b, "cli");
             }
@@ -638,27 +752,129 @@ pub async fn read_beads(
         }
 
         // Tier 3: JSONL file
-        let issues_path = resolve_issues_path(&project_path);
+        let issues_path = resolve_issues_path(project_path);
         if !issues_path.exists() {
-            return (
+            return Err(error_response(
                 StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": "No data source available: Dolt SQL, bd CLI, and JSONL all failed" })),
-            );
+                "No data source available: Dolt SQL, bd CLI, and JSONL all failed",
+            ));
         }
         match read_beads_from_jsonl(&issues_path) {
             Ok(b) => (b, "jsonl"),
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": e })),
-                );
-            }
+            Err(e) => return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, e)),
         }
     };
 
-    let beads = post_process_beads(beads);
-    upsert_counts_cache(&db, &path, source, &beads);
-    (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": source })))
+    Ok(BeadsRead {
+        beads: post_process_beads(beads),
+        source,
+    })
+}
+
+/// GET /api/beads/counts?path=/path/to/project
+/// GET /api/beads/counts?path=dolt://beads_dbname
+///
+/// Returns only the four per-status totals the home page needs for its donut
+/// charts — a few hundred bytes instead of the megabytes `/api/beads` ships.
+/// Whenever the project lives in Dolt the totals are aggregated by the server
+/// (`GROUP BY status`), so no issue row is transferred at all.
+///
+/// The counts are also written to the SQLite cache, keeping `cachedCounts` in
+/// `/api/projects` warm for the next cold load.
+pub async fn read_bead_counts(
+    Extension(dolt_manager): Extension<Arc<DoltManager>>,
+    Extension(db): Extension<Arc<Database>>,
+    Query(params): Query<BeadsParams>,
+) -> impl IntoResponse {
+    let started = std::time::Instant::now();
+    let path = params.path.replace('\\', "/");
+    tracing::info!(path = %path, "GET /api/beads/counts");
+
+    match resolve_bead_counts(&dolt_manager, &path).await {
+        Ok((counts, source)) => {
+            upsert_counts_cache(&db, &path, source, &counts);
+            tracing::info!(
+                path = %path,
+                source = %source,
+                open = counts.open,
+                in_progress = counts.in_progress,
+                inreview = counts.inreview,
+                closed = counts.closed,
+                duration_ms = started.elapsed().as_millis() as u64,
+                "Resolved bead counts"
+            );
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "counts": counts, "source": source })),
+            )
+        }
+        Err((status, body)) => {
+            tracing::warn!(
+                path = %path,
+                status = status.as_u16(),
+                duration_ms = started.elapsed().as_millis() as u64,
+                "Failed to resolve bead counts: {:?}",
+                body.0.get("error")
+            );
+            (status, body)
+        }
+    }
+}
+
+/// Resolves bead counts for a project, preferring source-side aggregation.
+///
+/// Order: `dolt://` direct aggregate → per-project Dolt aggregate → central
+/// Dolt aggregate → full cascade read counted in memory. Only the last step
+/// materializes beads, and it delegates to [`read_beads_cascade`] rather than
+/// re-implementing tier selection.
+async fn resolve_bead_counts(
+    dolt_manager: &DoltManager,
+    path: &str,
+) -> Result<(BeadCounts, &'static str), RouteError> {
+    if let Some(db_name) = path.strip_prefix(DOLT_PATH_PREFIX) {
+        ensure_dolt_online(dolt_manager).await?;
+        return match dolt_manager.count_issues_by_status(db_name).await {
+            Ok(rows) => Ok((counts_from_status_rows(&rows), "dolt-direct")),
+            Err(e) => Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                e.to_string(),
+            )),
+        };
+    }
+
+    let project_path = PathBuf::from(path);
+    let beads_dir = resolve_beads_dir(&project_path)?;
+
+    // Tier 0 aggregate: per-project Dolt server.
+    if let Some((port, db_name)) = resolve_project_dolt(&beads_dir, &project_path).await {
+        match dolt::count_issues_by_status_on_port(port, &db_name).await {
+            Ok(rows) => return Ok((counts_from_status_rows(&rows), "dolt-project")),
+            Err(e) => tracing::warn!(
+                "Per-project Dolt count on port {} failed: {}, falling back",
+                port,
+                e
+            ),
+        }
+    }
+
+    // Tier 1 aggregate: central Dolt SQL server.
+    if dolt_manager.is_available() {
+        if let Some(db_name) = dolt::database_name_for_project(&project_path) {
+            match dolt_manager.count_issues_by_status(&db_name).await {
+                Ok(rows) => return Ok((counts_from_status_rows(&rows), "dolt-central")),
+                Err(e) => tracing::info!(
+                    "Dolt count aggregate failed for {} ({}), falling back to full read",
+                    db_name,
+                    e
+                ),
+            }
+        }
+    }
+
+    // Fallback: bd CLI / JSONL have no cheap aggregate, so read and count.
+    let BeadsRead { beads, source } =
+        read_beads_cascade(dolt_manager, path, &project_path, None).await?;
+    Ok((counts_from_beads(&beads), source))
 }
 
 /// Request body for creating a new bead.
@@ -2051,5 +2267,104 @@ mod tests {
         let result = extract_json_array(output).unwrap();
         let beads: Vec<Bead> = serde_json::from_str(result).unwrap();
         assert_eq!(beads.len(), 0);
+    }
+
+    // ── bead counts aggregation ─────────────────────────────────────────
+    //
+    // These must stay in lockstep with `STATUS_MAP` in `src/types/index.ts`:
+    // the home page used to compute the same four numbers client-side from
+    // the full bead list, and `/api/beads/counts` must not change them.
+
+    #[test]
+    fn test_counts_from_status_rows_folds_synonyms_into_columns() {
+        let rows = [
+            ("open", 2i64),
+            ("pending", 1),
+            ("blocked", 3),
+            ("deferred", 1),
+            ("in_progress", 4),
+            ("hooked", 2),
+            ("inreview", 5),
+            ("closed", 6),
+            ("done", 1),
+            ("resolved", 2),
+        ];
+        assert_eq!(
+            counts_from_status_rows(&rows),
+            BeadCounts {
+                open: 7,
+                in_progress: 6,
+                inreview: 5,
+                closed: 9,
+            }
+        );
+    }
+
+    #[test]
+    fn test_counts_from_status_rows_hides_tombstones() {
+        let rows = [("open", 1i64), ("tombstone", 9)];
+        assert_eq!(
+            counts_from_status_rows(&rows),
+            BeadCounts {
+                open: 1,
+                in_progress: 0,
+                inreview: 0,
+                closed: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn test_counts_from_status_rows_unknown_status_lands_in_open() {
+        // Frontend maps unrecognized statuses to the open column with a badge.
+        let rows = [("wat", 3i64), ("", 1)];
+        assert_eq!(counts_from_status_rows(&rows).open, 4);
+    }
+
+    #[test]
+    fn test_counts_from_status_rows_empty_is_all_zero() {
+        let rows: [(&str, i64); 0] = [];
+        assert_eq!(counts_from_status_rows(&rows), BeadCounts::default());
+    }
+
+    #[test]
+    fn test_counts_from_beads_matches_row_aggregation() {
+        // Counting rows in memory (bd CLI / JSONL tiers) must produce exactly
+        // the same numbers as the SQL GROUP BY aggregate (Dolt tiers).
+        let statuses = [
+            "open",
+            "blocked",
+            "pending",
+            "in_progress",
+            "hooked",
+            "inreview",
+            "closed",
+            "done",
+            "tombstone",
+            "mystery",
+        ];
+        let beads: Vec<Bead> = statuses
+            .iter()
+            .enumerate()
+            .map(|(i, status)| {
+                let json = format!(
+                    r#"{{"id":"b-{}","title":"T","status":"{}"}}"#,
+                    i, status
+                );
+                serde_json::from_str::<Bead>(&json).unwrap()
+            })
+            .collect();
+
+        let rows: Vec<(&str, i64)> = statuses.iter().map(|s| (*s, 1i64)).collect();
+        assert_eq!(counts_from_beads(&beads), counts_from_status_rows(&rows));
+        assert_eq!(
+            counts_from_beads(&beads),
+            BeadCounts {
+                open: 4, // open + blocked + pending + mystery
+                in_progress: 2,
+                inreview: 1,
+                closed: 2,
+            }
+        );
     }
 }

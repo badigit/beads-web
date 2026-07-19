@@ -8,31 +8,21 @@ import type { Project } from '@/types';
 // `useProjects` composes two dependencies:
 //   - `getProjectsWithTags` (src/lib/db) — returns the project list with
 //     `cachedCounts` attached by the backend.
-//   - `loadProjectBeads` (src/lib/beads-parser) — fetches fresh beads per
-//     project and normally overwrites the cached seed.
+//   - `api.beads.counts` (src/lib/api) — the lightweight per-status counts
+//     endpoint that refreshes the donut values. It must NOT download the full
+//     bead list (`api.beads.read`) just to compute four numbers.
 //
-// We mock both. `loadProjectBeads` is made to never resolve so the hook
-// stays in the "cached seed only" state and we can assert the initial
-// render uses the cached counts, not zeros.
+// We mock both. By default `counts` never resolves so the hook stays in the
+// "cached seed only" state and we can assert the initial render uses the
+// cached counts, not zeros.
 
 const getProjectsWithTagsMock = vi.fn();
-const loadProjectBeadsMock = vi.fn();
+const beadsCountsMock = vi.fn();
+const beadsReadMock = vi.fn();
 
 vi.mock('@/lib/db', () => ({
   getProjectsWithTags: (...args: unknown[]) => getProjectsWithTagsMock(...args),
   createProject: vi.fn(),
-}));
-
-vi.mock('@/lib/beads-parser', () => ({
-  loadProjectBeads: (...args: unknown[]) => loadProjectBeadsMock(...args),
-  // Not called in these tests because loadProjectBeads never resolves, but
-  // keep a stub so importers don't crash.
-  groupBeadsByStatus: vi.fn(() => ({
-    open: [],
-    in_progress: [],
-    inreview: [],
-    closed: [],
-  })),
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -40,6 +30,10 @@ vi.mock('@/lib/api', () => ({
     archive: vi.fn(),
     unarchive: vi.fn(),
     delete: vi.fn(),
+  },
+  beads: {
+    counts: (...args: unknown[]) => beadsCountsMock(...args),
+    read: (...args: unknown[]) => beadsReadMock(...args),
   },
 }));
 
@@ -49,9 +43,10 @@ import { useProjects } from '../use-projects';
 
 beforeEach(() => {
   getProjectsWithTagsMock.mockReset();
-  loadProjectBeadsMock.mockReset();
+  beadsCountsMock.mockReset();
+  beadsReadMock.mockReset();
   // Never resolve — lets us observe the cached-seed state in isolation.
-  loadProjectBeadsMock.mockImplementation(() => new Promise(() => {}));
+  beadsCountsMock.mockImplementation(() => new Promise(() => {}));
 });
 
 describe('useProjects — cached counts seeding', () => {
@@ -78,7 +73,7 @@ describe('useProjects — cached counts seeding', () => {
     const { result } = renderHook(() => useProjects());
 
     // Wait for the fetch to populate state. `isLoading` flips to false
-    // right after the seed step, before beads fetching starts.
+    // right after the seed step, before counts fetching starts.
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
     });
@@ -124,5 +119,61 @@ describe('useProjects — cached counts seeding', () => {
       inreview: 0,
       closed: 0,
     });
+  });
+});
+
+describe('useProjects — counts endpoint', () => {
+  const project: Project = {
+    id: 'p3',
+    name: 'counted-project',
+    path: '/tmp/counted-project',
+    tags: [],
+    lastOpened: '2026-04-22T00:00:00Z',
+    createdAt: '2026-04-22T00:00:00Z',
+    cachedCounts: null,
+  };
+
+  it('refreshes donut values from the counts endpoint, never from the full bead list', async () => {
+    getProjectsWithTagsMock.mockResolvedValueOnce([project]);
+    beadsCountsMock.mockResolvedValue({
+      counts: { open: 1, in_progress: 2, inreview: 3, closed: 4 },
+      source: 'dolt-central',
+    });
+
+    const { result } = renderHook(() => useProjects());
+
+    await waitFor(() => {
+      expect(result.current.projects[0]?.countsLoaded).toBe(true);
+    });
+
+    expect(beadsCountsMock).toHaveBeenCalledWith('/tmp/counted-project');
+    // The whole point of the endpoint: no megabyte-sized bead download.
+    expect(beadsReadMock).not.toHaveBeenCalled();
+
+    const loaded = result.current.projects[0];
+    expect(loaded.beadCounts).toEqual({
+      open: 1,
+      in_progress: 2,
+      inreview: 3,
+      closed: 4,
+    });
+    expect(loaded.dataSource).toBe('dolt-central');
+    expect(loaded.beadError).toBeUndefined();
+  });
+
+  it('surfaces a counts failure on the project instead of throwing', async () => {
+    getProjectsWithTagsMock.mockResolvedValueOnce([project]);
+    beadsCountsMock.mockRejectedValue(
+      new Error('API error: 503 Dolt server is not running')
+    );
+
+    const { result } = renderHook(() => useProjects());
+
+    await waitFor(() => {
+      expect(result.current.projects[0]?.beadError).toBe(
+        'API error: 503 Dolt server is not running'
+      );
+    });
+    expect(result.current.error).toBeNull();
   });
 });

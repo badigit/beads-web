@@ -168,6 +168,27 @@ impl DoltManager {
         Ok(beads)
     }
 
+    /// Aggregates issues per raw status without transferring any issue rows.
+    ///
+    /// This is the cheap counterpart of [`read_beads`](Self::read_beads) used by
+    /// `GET /api/beads/counts`: the home page only needs four numbers, so the
+    /// `GROUP BY` runs on the Dolt server instead of shipping every description,
+    /// comment and dependency over the wire.
+    pub async fn count_issues_by_status(
+        &self,
+        db_name: &str,
+    ) -> Result<Vec<(String, i64)>, DoltError> {
+        validate_database_name(db_name)?;
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+        let counts = query_status_counts(&mut conn, db_name).await?;
+        self.available.store(true, Ordering::Relaxed);
+        Ok(counts)
+    }
+
     /// Returns the issue prefix stored by `bd init`, falling back to the database name.
     pub async fn issue_prefix(&self, db_name: &str) -> Result<String, DoltError> {
         validate_database_name(db_name)?;
@@ -522,6 +543,35 @@ pub async fn read_beads_on_port(port: u16, db_name: &str) -> Result<Vec<Bead>, D
     Ok(beads)
 }
 
+/// Aggregates issues per raw status on a Dolt server listening on `port`.
+///
+/// Per-project counterpart of [`DoltManager::count_issues_by_status`], mirroring
+/// [`read_beads_on_port`] but transferring one row per distinct status instead
+/// of the whole issue table.
+pub async fn count_issues_by_status_on_port(
+    port: u16,
+    db_name: &str,
+) -> Result<Vec<(String, i64)>, DoltError> {
+    let config = DoltConnectConfig::from_env();
+    let pool_opts = PoolOpts::default().with_constraints(PoolConstraints::new(0, 2).unwrap());
+    let opts = config.build_opts(Some(port), pool_opts);
+
+    let pool = Pool::new(opts);
+    let mut conn = pool
+        .get_conn()
+        .await
+        .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+
+    let result = query_status_counts(&mut conn, db_name).await;
+
+    drop(conn);
+    if let Err(e) = pool.disconnect().await {
+        tracing::warn!("Failed to disconnect temporary pool (port {}): {}", port, e);
+    }
+
+    result
+}
+
 /// Discover the beads database name by connecting to a Dolt server and looking
 /// for a database that has an `issues` table.
 pub async fn discover_database_on_port(port: u16) -> Result<String, DoltError> {
@@ -583,18 +633,7 @@ async fn read_beads_from_conn(
     conn: &mut mysql_async::Conn,
     db_name: &str,
 ) -> Result<Vec<Bead>, DoltError> {
-    // Check database exists
-    let db_exists: Option<Row> = conn
-        .exec_first(
-            "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = :db",
-            mysql_async::params! { "db" => db_name },
-        )
-        .await
-        .map_err(|e| DoltError::QueryFailed(e.to_string()))?;
-
-    if db_exists.is_none() {
-        return Err(DoltError::DatabaseNotFound(db_name.to_string()));
-    }
+    ensure_database_exists(conn, db_name).await?;
 
     let beads = query_issues(conn, db_name).await?;
     let mut beads = merge_comments(conn, db_name, beads).await?;
@@ -609,6 +648,61 @@ fn get_opt_str(row: &Row, col: &str) -> Option<String> {
 
 fn get_str(row: &Row, col: &str) -> String {
     get_opt_str(row, col).unwrap_or_default()
+}
+
+/// Fails with [`DoltError::DatabaseNotFound`] unless the schema exists.
+async fn ensure_database_exists(
+    conn: &mut mysql_async::Conn,
+    db_name: &str,
+) -> Result<(), DoltError> {
+    let db_exists: Option<Row> = conn
+        .exec_first(
+            "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = :db",
+            mysql_async::params! { "db" => db_name },
+        )
+        .await
+        .map_err(|e| DoltError::QueryFailed(e.to_string()))?;
+
+    if db_exists.is_none() {
+        return Err(DoltError::DatabaseNotFound(db_name.to_string()));
+    }
+    Ok(())
+}
+
+/// Runs `SELECT status, COUNT(*) … GROUP BY status` and returns the raw
+/// `(status, count)` pairs.
+///
+/// Mapping raw statuses onto the four kanban columns is deliberately left to
+/// the caller (`routes::beads`) so that the SQL tiers and the in-memory tiers
+/// share exactly one mapping implementation.
+async fn query_status_counts(
+    conn: &mut mysql_async::Conn,
+    db_name: &str,
+) -> Result<Vec<(String, i64)>, DoltError> {
+    // The database name is interpolated into the statement, so it must be
+    // validated first — it can originate from project metadata on disk.
+    validate_discovered_database_name(db_name)?;
+    ensure_database_exists(conn, db_name).await?;
+
+    let query = format!(
+        "SELECT status, COUNT(*) AS cnt FROM `{}`.issues GROUP BY status",
+        db_name
+    );
+    let rows: Vec<Row> = conn
+        .query(&query)
+        .await
+        .map_err(|e| DoltError::QueryFailed(format!("status counts: {}", e)))?;
+
+    Ok(rows
+        .iter()
+        .map(|row| {
+            // A NULL status is treated as "open" downstream, matching the
+            // default applied by `query_issues`.
+            let status = get_str(row, "status");
+            let count = row.get::<i64, _>("cnt").unwrap_or(0);
+            (status, count)
+        })
+        .collect())
 }
 
 /// Queries issues from a Dolt database.

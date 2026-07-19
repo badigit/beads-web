@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
 import * as api from "@/lib/api";
-import { loadProjectBeads, groupBeadsByStatus } from "@/lib/beads-parser";
 import {
   getProjectsWithTags,
   createProject,
@@ -103,23 +102,24 @@ export function useProjects(): UseProjectsResult {
       // Skip beads loading for archived projects
       const activeData = data.filter(p => !p.archivedAt);
 
-      // Then load beads per-project, updating each as it completes
+      // Then load counts per-project, updating each as it completes.
+      // This hits the aggregate endpoint (`/api/beads/counts`) — the donut
+      // only needs four numbers, so downloading every bead with its
+      // descriptions, comments and dependencies would be pure waste.
       let loaded = 0;
       const total = activeData.length;
 
       const loadBeads = async (project: Project) => {
         try {
           if (beadsSignal.aborted) return null;
-          const result = await loadProjectBeads(project.path, { withSource: true });
+          const result = await api.beads.counts(project.path);
           if (beadsSignal.aborted) return null;
-          const grouped = groupBeadsByStatus(result.beads);
-          const beadCounts: BeadCounts = {
-            open: grouped.open.length,
-            in_progress: grouped.in_progress.length,
-            inreview: grouped.inreview.length,
-            closed: grouped.closed.length,
+          return {
+            id: project.id,
+            beadCounts: result.counts,
+            dataSource: result.source,
+            beadError: undefined,
           };
-          return { id: project.id, beadCounts, dataSource: result.source, beadError: undefined };
         } catch (err) {
           if (err instanceof DOMException && err.name === 'AbortError') return null;
           const message = err instanceof Error ? err.message : 'Unknown error';

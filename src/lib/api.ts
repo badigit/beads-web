@@ -3,8 +3,8 @@
  * Replaces Tauri invoke() calls with HTTP fetch to backend
  */
 
-import { BeadsResponseSchema, PRStatusSchema, WorktreeStatusSchema } from '@/lib/api-schemas';
-import type { Project, Tag, Bead, WorktreeStatus, WorktreeEntry, PRStatus, PRFilesResponse, MemoryResponse, MemoryStats, MemoryEntry, Agent, AgentModel } from '@/types';
+import { BeadCountsResponseSchema, BeadsResponseSchema, PRStatusSchema, WorktreeStatusSchema } from '@/lib/api-schemas';
+import type { Project, Tag, Bead, BeadCounts, WorktreeStatus, WorktreeEntry, PRStatus, PRFilesResponse, MemoryResponse, MemoryStats, MemoryEntry, Agent, AgentModel } from '@/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
 
@@ -49,6 +49,15 @@ export interface BdCommandResult {
   stdout: string;
   stderr: string;
   code: number;
+}
+
+/**
+ * Response of `GET /api/beads/counts`
+ */
+export interface BeadCountsResponse {
+  counts: BeadCounts;
+  /** Tier the counts came from: dolt-direct | dolt-project | dolt-central | cli | jsonl */
+  source?: string;
 }
 
 /**
@@ -160,6 +169,18 @@ export const beads = {
       `/api/beads?${params}`
     );
     BeadsResponseSchema.parse(data);
+    return data;
+  },
+
+  /**
+   * Per-status bead totals for a project — a few hundred bytes, aggregated by
+   * the backend. Use this instead of `read()` whenever only the four column
+   * counts are needed (e.g. the home page donuts).
+   */
+  counts: async (path: string) => {
+    const params = new URLSearchParams({ path });
+    const data = await fetchApi<BeadCountsResponse>(`/api/beads/counts?${params}`);
+    BeadCountsResponseSchema.parse(data);
     return data;
   },
 
