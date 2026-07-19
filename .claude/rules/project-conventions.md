@@ -123,7 +123,7 @@ server/
 
 - **Global state libraries** (Redux, Zustand, Jotai) — not used, local state only
 - **CSS modules or styled-components** — Tailwind only
-- **`next dev` with `output: 'export'`** — incompatible, must comment out for dev server
+- **Manually editing `output: 'export'` to run the dev server** — no longer needed: the config applies it only in production builds and proxies `/api/*` to the backend in dev
 - **`bd edit`** — opens $EDITOR, blocks agents
 - **Direct file mutations** — always go through `bd` CLI or API
 - **`I` prefix on interfaces** — not used in this codebase
