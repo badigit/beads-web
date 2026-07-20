@@ -111,6 +111,34 @@ The more specific the memory, the more useful it is next time. No reusable insig
 - Listed in [beads COMMUNITY_TOOLS.md](https://github.com/steveyegge/beads/blob/main/docs/COMMUNITY_TOOLS.md)
 - Workspace beads config: `validation.on-create = warn` (create-time quality checks warn, don't block)
 
+## Long-running services: PM2 stack `beads-web`
+
+Прод-деплой (Direct Dolt binary на `:3056`) крутится под **PM2** (стак
+`beads-web`, конфиг `pm2.config.cjs`), управляется из дашборда ai-tools. Общее
+правило флота — `~/.claude/rules/pm2-fleet.md`; здесь — контракт этого стака.
+
+**Прежде чем запускать/останавливать/убивать сервис — глянь живое состояние:**
+`pm2 jlist` (или `pm2 ls`).
+
+Процесс стака:
+- `beads-web` — бинарник `bin/beads-web-win-x64-direct.exe` на `:3056`, читает
+  центральный Dolt напрямую (`config.rs`).
+
+Управление:
+- Перезапуск (после `scripts/build-windows-direct.ps1`): `pm2 restart beads-web`.
+- Остановить / поднять: `pm2 stop beads-web` / `pm2 start pm2.config.cjs`.
+- Логи: `pm2 logs beads-web --lines 100 --nostream`.
+
+Запрещено / нюансы:
+- **НЕ поднимать второй бинарник на `:3056`** (`scripts/start-direct-dolt.ps1`)
+  поверх живой PM2-копии — гонка за порт, одна копия умрёт. Нужен ручной запуск —
+  сначала `pm2 stop beads-web`.
+- **`npm run dev` (:3007) — НЕ конфликтует, это нормально:** dev-фронт проксирует
+  `/api/*` в живой бэкенд на `:3056` (`BEADS_API_PORT`), UI-правки видны сразу
+  против живого Dolt, бинарник пересобирать не надо. Гасить PM2-копию НЕ нужно.
+- **НЕ убивать процесс точечно** через `taskkill`/`Stop-Process` — только
+  `pm2 stop beads-web`.
+
 ## Distribution
 
 Single binary — frontend is embedded via rust-embed. No npm publish needed.
