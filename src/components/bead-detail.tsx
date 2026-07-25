@@ -220,7 +220,7 @@ export function BeadDetail({
       {/* Slide-in panel */}
       <div
         className={cn(
-          "fixed inset-y-0 right-0 z-50 w-full sm:max-w-lg md:max-w-xl overflow-y-auto bg-surface-base border-l border-b-default p-6 shadow-lg transition-transform duration-300 ease-in-out",
+          "fixed inset-y-0 right-0 z-50 w-full sm:max-w-lg md:max-w-2xl lg:max-w-3xl xl:max-w-[50vw] overflow-y-auto bg-surface-base border-l border-b-default p-6 shadow-lg transition-transform duration-300 ease-in-out",
           open ? "translate-x-0" : "translate-x-full",
           isDesignDocFullScreen && "invisible"
         )}
