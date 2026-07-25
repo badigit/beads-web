@@ -266,7 +266,7 @@ export function MemoryPanel({
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent
           side="right"
-          className="w-full sm:max-w-lg md:max-w-xl bg-surface-base border-b-default flex flex-col"
+          className="w-full sm:max-w-lg md:max-w-2xl lg:max-w-3xl xl:max-w-[50vw] bg-surface-base border-b-default flex flex-col"
         >
           <SheetHeader className="space-y-1">
             <SheetTitle className="flex items-center gap-2 text-t-primary">
