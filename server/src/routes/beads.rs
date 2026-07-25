@@ -558,7 +558,7 @@ fn read_beads_from_jsonl(issues_path: &Path) -> Result<Vec<Bead>, String> {
 }
 
 /// Dolt-only path prefix: `dolt://beads_dbname`
-const DOLT_PATH_PREFIX: &str = "dolt://";
+pub const DOLT_PATH_PREFIX: &str = "dolt://";
 
 /// GET /api/beads?path=/path/to/project
 /// GET /api/beads?path=dolt://beads_dbname

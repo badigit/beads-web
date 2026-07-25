@@ -598,7 +598,13 @@ export const watch = {
   },
 
   /**
-   * Subscribes to revision changes of a `dolt://` project's database.
+   * Subscribes to revision changes of a project's Dolt database.
+   *
+   * The project is identified by path, not by database name: a filesystem path
+   * says nothing about where its beads actually live, and most registered
+   * projects are read from central Dolt. The server owns that mapping (it reads
+   * `.beads/`), and answers 404 when there is nothing to watch — which, per the
+   * SSE spec, stops `EventSource` from reconnecting.
    *
    * Unlike {@link watch.beads}, transient errors do not close the stream:
    * `EventSource` reconnects on its own with backoff, and closing it in
@@ -606,12 +612,12 @@ export const watch = {
    * caller is told about connection state instead and decides what to show.
    */
   doltRevision: (
-    database: string,
+    projectPath: string,
     onEvent: (event: DoltRevisionEvent) => void,
     onStateChange?: (connected: boolean) => void
   ) => {
     const eventSource = new EventSource(
-      `${API_BASE}/api/dolt/watch?database=${encodeURIComponent(database)}`
+      `${API_BASE}/api/dolt/watch?project_path=${encodeURIComponent(projectPath)}`
     );
     eventSource.onopen = () => onStateChange?.(true);
     eventSource.onmessage = (e) => {

@@ -37,7 +37,7 @@
 - **Style**: Monolithic SPA with embedded backend. Frontend is a static Next.js export served by the Rust binary.
 - **Data flow**: React hooks → `src/lib/api.ts` (fetch wrapper) → Axum REST API → rusqlite / bd CLI / Dolt SQL / filesystem
 - **Mutations**: Bead CRUD goes through `bd` CLI via `POST /api/bd/command` (whitelisted commands). Project/tag CRUD via direct SQLite.
-- **Real-time**: SSE file watcher for filesystem projects; 15s polling for `dolt://` projects
+- **Real-time**: two SSE channels, both live for every project. `/api/watch/beads` reports `.beads/issues.jsonl` writes (file-mode `bd` only); `/api/dolt/watch?project_path=…` polls the database's working-set hash server-side and pushes on change. The client subscribes by project path — only the server can tell whether a path is Dolt-backed — and gets 404 when it is not.
 - **Error handling**: `fetchApi()` throws on non-OK responses with parsed error body. Components use try/catch + state.
 - **State management**: Local React state + custom hooks. No global store (no Redux/Zustand/Context).
 - **Validation**: Manual validation in components and API handlers. No validation library.

@@ -27,7 +27,6 @@ import {
   groupBeadsByStatus,
   assignTicketNumbers,
 } from "@/lib/beads-parser";
-import { doltDatabase } from "@/lib/utils";
 import type { Bead, BeadStatus } from "@/types";
 
 /** Options for a (re)load of the bead set. */
@@ -272,10 +271,13 @@ export function useBeads(projectPath: string): UseBeadsResult {
     }
   }, [watchError, error]);
 
-  // Live updates for dolt:// projects. There is no file to watch, so the server
-  // watches the database's revision instead and only notifies on real changes —
-  // replacing a 15s poll that refetched every bead whether or not anything moved.
-  useDoltWatcher(doltDatabase(projectPath), revalidate);
+  // Live updates for Dolt-backed projects. The path alone does not say whether a
+  // project is one — nearly all are registered by filesystem path yet read from
+  // central Dolt — so every project is offered to the watcher and the server
+  // decides: it resolves the database from `.beads/` and refuses with 404 when
+  // there is none. Gating this on a `dolt://` path was why no board ever
+  // received live updates (bweb-wh2).
+  useDoltWatcher(projectPath, revalidate);
 
   return {
     beads: state.beads,
