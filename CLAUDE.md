@@ -147,6 +147,37 @@ Single binary — frontend is embedded via rust-embed. No npm publish needed.
 - Users download binary from GitHub Releases, run it, open http://localhost:3007
 - `npm run dev` (port 3007) works out of the box — `next.config.js` enables `output: 'export'` only for production builds, and in dev it proxies `/api/*` to the running backend (`BEADS_API_PORT`, default 3056). UI changes are visible instantly against live Dolt data, no binary rebuild needed.
 
+## Rust toolchain (Windows dev machine)
+
+The backend builds with the **GNU** toolchain. This machine has no MSVC linker at
+all — no Visual Studio, no Build Tools — so the msvc-host toolchain dies with
+`linker 'link.exe' not found` before it compiles anything.
+
+- `rustup default stable-x86_64-pc-windows-gnu` is set machine-wide (2026-07-25),
+  so plain `cargo build` / `cargo test` work from any checkout. Before that, only
+  `scripts/build-windows-direct.ps1` knew the incantation and every new session
+  rediscovered the linker error.
+- `gcc` comes from scoop's mingw (`~/scoop/apps/mingw/current/bin`) and is already
+  on the global PATH; the PATH line in `build-windows-direct.ps1` is defensive,
+  not load-bearing.
+- **No `rust-toolchain.toml`, deliberately.** rustup rejects a host triple in
+  `channel` (`error: target tuple in channel name`), so the host cannot be pinned
+  from the repo at all; pinning bare `channel = "stable"` would resolve back to
+  the machine default and fix nothing. The requirement lives here instead.
+- CI is untouched by any of this: `.github/workflows/release.yml` installs
+  `dtolnay/rust-toolchain@stable` and passes an explicit `--target` per matrix
+  entry, including `x86_64-pc-windows-msvc`.
+- **Worktrees pay for a cold build.** Bare `cargo` uses the worktree's own
+  `server/target`, so a bead worktree rebuilds all ~377 crates from scratch.
+  Measured 2026-07-25: cold `cargo build --tests` is **1m32s**, a warm `cargo
+  test` cycle is ~50s of which ~29s is the test run itself — so compilation is
+  not what makes iteration slow here, and the "~20 min" estimate in the header of
+  `build-windows-direct.ps1` does not hold for debug builds. The cost that *is*
+  real is disk: **0.91 GB per target dir** after the `[profile.dev]` trim in
+  `server/Cargo.toml` (1.57 GB before it). Point `CARGO_TARGET_DIR` at the main
+  checkout when running cargo directly from a worktree, the way that script
+  already does.
+
 ## Configuration
 
 **Every setting is resolved in exactly one place: `server/src/config.rs`.** Dolt password (env → `%APPDATA%\beads\credentials` → legacy `.dolt.env`/`.beads/.env`), `bd.exe` path (incl. the winget package folder that never reaches PATH), server `PORT` — all inside the process.
