@@ -1,13 +1,19 @@
 "use client";
 
 /**
- * Live updates for `dolt://` projects.
+ * Live updates for projects whose beads live in Dolt.
  *
- * Filesystem projects are covered by `useFileWatcher`, which watches
- * `.beads/issues.jsonl`. Dolt-only projects have no such file, so the board used
- * to poll every 15 seconds and refetch all beads unconditionally. This hook
- * subscribes to the backend's revision stream instead: the server watches the
- * database's working-set hash and only emits when it actually moves.
+ * `useFileWatcher` watches `.beads/issues.jsonl`, which only exists while `bd`
+ * runs in file mode; against a Dolt server that file is never written, so the
+ * board used to poll every 15 seconds and refetch all beads unconditionally.
+ * This hook subscribes to the backend's revision stream instead: the server
+ * watches the database's working-set hash and only emits when it actually moves.
+ *
+ * The subscription is keyed by project *path* and is attempted for every
+ * project, filesystem ones included — only the server can tell whether a path is
+ * backed by Dolt, and gating on the `dolt://` prefix meant no real project ever
+ * subscribed (bweb-wh2). A project without a Dolt database gets a 404, which
+ * `EventSource` treats as fatal, so nothing retries.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -21,14 +27,15 @@ export interface UseDoltWatcherResult {
 }
 
 /**
- * Watches a Dolt database for changes and invokes a callback when it changes.
+ * Watches a project's Dolt database and invokes a callback when it changes.
  *
- * @param database - Dolt database name, or null to watch nothing.
+ * @param projectPath - Project path (filesystem or `dolt://…`), or null/empty to
+ *   watch nothing. The server resolves it to a database.
  * @param onChange - Called after a revision change settles.
  * @param debounceMs - Window used to coalesce bursts (default: 100).
  */
 export function useDoltWatcher(
-  database: string | null,
+  projectPath: string | null,
   onChange: () => void,
   debounceMs: number = 100
 ): UseDoltWatcherResult {
@@ -63,10 +70,10 @@ export function useDoltWatcher(
   );
 
   useEffect(() => {
-    if (!database) return;
+    if (!projectPath) return;
 
     const close = api.watch.doltRevision(
-      database,
+      projectPath,
       (event) => handleRevision(event.revision),
       setIsConnected
     );
@@ -79,7 +86,7 @@ export function useDoltWatcher(
       lastRevisionRef.current = null;
       close();
     };
-  }, [database, handleRevision]);
+  }, [projectPath, handleRevision]);
 
   return { isConnected };
 }
