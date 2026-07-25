@@ -866,13 +866,13 @@ mod report_tests {
     fn env_source_names_the_variable() {
         let line = format_setting_line(
             "dolt host",
-            "10.9.0.105",
+            "dolt.example",
             &ConfigSource::Env("BEADS_DOLT_SERVER_HOST"),
         );
 
         assert_eq!(
             line.text,
-            "dolt host: 10.9.0.105 (from env BEADS_DOLT_SERVER_HOST)"
+            "dolt host: dolt.example (from env BEADS_DOLT_SERVER_HOST)"
         );
         assert!(!line.warn);
     }
@@ -929,7 +929,7 @@ mod report_tests {
         let checked = vec![
             "env BEADS_DOLT_PASSWORD".to_string(),
             "env DOLT_PASSWORD".to_string(),
-            "credentials file C:\\creds [10.9.0.105:3307]".to_string(),
+            "credentials file C:\\creds [dolt.example:3307]".to_string(),
             "legacy file .dolt.env".to_string(),
         ];
 
@@ -981,13 +981,13 @@ mod report_tests {
     fn checked_sources_list_env_credentials_and_legacy_in_resolution_order() {
         let legacy = [PathBuf::from(".dolt.env"), PathBuf::from(".beads/.env")];
 
-        let checked = password_checked_sources("10.9.0.105:3307", &cred_path(), &legacy);
+        let checked = password_checked_sources("dolt.example:3307", &cred_path(), &legacy);
 
         assert_eq!(checked.len(), 5, "2 env vars + credentials file + 2 legacy files");
         assert_eq!(checked[0], "env BEADS_DOLT_PASSWORD");
         assert_eq!(checked[1], "env DOLT_PASSWORD");
         assert!(
-            checked[2].contains("credentials file") && checked[2].contains("[10.9.0.105:3307]"),
+            checked[2].contains("credentials file") && checked[2].contains("[dolt.example:3307]"),
             "credentials entry must name the file and the section: {:?}",
             checked[2]
         );
@@ -1020,7 +1020,7 @@ mod report_tests {
     fn sample_config() -> ResolvedConfig {
         ResolvedConfig {
             server_port: (3056, ConfigSource::Env("PORT")),
-            dolt_host: ("10.9.0.105".to_string(), ConfigSource::Env("BEADS_DOLT_SERVER_HOST")),
+            dolt_host: ("dolt.example".to_string(), ConfigSource::Env("BEADS_DOLT_SERVER_HOST")),
             dolt_port: (3307, ConfigSource::Default),
             dolt_user: ("beads".to_string(), ConfigSource::Env("BEADS_DOLT_SERVER_USER")),
             dolt_password: PasswordResolution {
@@ -1102,14 +1102,14 @@ mod report_tests {
     fn empty_environment_summary_names_the_credentials_file_as_the_password_source() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("credentials");
-        fs::write(&path, format!("[10.9.0.105:3307]\npassword={SECRET}\n")).unwrap();
+        fs::write(&path, format!("[dolt.example:3307]\npassword={SECRET}\n")).unwrap();
         let empty_env = [
             ("BEADS_DOLT_PASSWORD", None),
             ("DOLT_PASSWORD", None),
         ];
 
         let (password, source) =
-            resolve_dolt_password_from(&empty_env, "10.9.0.105:3307", &path, &[]);
+            resolve_dolt_password_from(&empty_env, "dolt.example:3307", &path, &[]);
         let line = format_secret_line("dolt password", password.as_deref(), &source, &[]);
 
         assert!(
@@ -1171,60 +1171,60 @@ mod parser_tests {
 
     #[test]
     fn ini_finds_value_in_matching_section_among_several() {
-        let contents = "[10.9.0.1:3307]\npassword=wrong\n\n[10.9.0.105:3307]\npassword=correct\n";
+        let contents = "[other.example:3307]\npassword=wrong\n\n[dolt.example:3307]\npassword=correct\n";
         assert_eq!(
-            parse_ini_value(contents, "10.9.0.105:3307", "password"),
+            parse_ini_value(contents, "dolt.example:3307", "password"),
             Some("correct".to_string())
         );
     }
 
     #[test]
     fn ini_missing_section_returns_none() {
-        let contents = "[10.9.0.1:3307]\npassword=wrong\n";
-        assert_eq!(parse_ini_value(contents, "10.9.0.105:3307", "password"), None);
+        let contents = "[other.example:3307]\npassword=wrong\n";
+        assert_eq!(parse_ini_value(contents, "dolt.example:3307", "password"), None);
     }
 
     #[test]
     fn ini_empty_contents_returns_none() {
-        assert_eq!(parse_ini_value("", "10.9.0.105:3307", "password"), None);
+        assert_eq!(parse_ini_value("", "dolt.example:3307", "password"), None);
     }
 
     #[test]
     fn ini_tolerates_spaces_around_equals() {
-        let contents = "[10.9.0.105:3307]\n  password   =   correct  \n";
+        let contents = "[dolt.example:3307]\n  password   =   correct  \n";
         assert_eq!(
-            parse_ini_value(contents, "10.9.0.105:3307", "password"),
+            parse_ini_value(contents, "dolt.example:3307", "password"),
             Some("correct".to_string())
         );
     }
 
     #[test]
     fn ini_tolerates_crlf_line_endings() {
-        let contents = "[10.9.0.105:3307]\r\npassword=correct\r\n";
+        let contents = "[dolt.example:3307]\r\npassword=correct\r\n";
         assert_eq!(
-            parse_ini_value(contents, "10.9.0.105:3307", "password"),
+            parse_ini_value(contents, "dolt.example:3307", "password"),
             Some("correct".to_string())
         );
     }
 
     #[test]
     fn ini_mixed_crlf_and_lf_line_endings() {
-        let contents = "[10.9.0.1:3307]\r\npassword=wrong\n[10.9.0.105:3307]\r\npassword=correct\n";
+        let contents = "[other.example:3307]\r\npassword=wrong\n[dolt.example:3307]\r\npassword=correct\n";
         assert_eq!(
-            parse_ini_value(contents, "10.9.0.105:3307", "password"),
+            parse_ini_value(contents, "dolt.example:3307", "password"),
             Some("correct".to_string())
         );
     }
 
     #[test]
     fn ini_empty_value_is_treated_as_absent() {
-        let contents = "[10.9.0.105:3307]\npassword=\n";
-        assert_eq!(parse_ini_value(contents, "10.9.0.105:3307", "password"), None);
+        let contents = "[dolt.example:3307]\npassword=\n";
+        assert_eq!(parse_ini_value(contents, "dolt.example:3307", "password"), None);
     }
 
     #[test]
     fn legacy_env_finds_matching_key() {
-        let contents = "BEADS_DOLT_SERVER_HOST=10.9.0.105\nBEADS_DOLT_PASSWORD=secret\n";
+        let contents = "BEADS_DOLT_SERVER_HOST=dolt.example\nBEADS_DOLT_PASSWORD=secret\n";
         assert_eq!(
             parse_legacy_env_value(contents, "BEADS_DOLT_PASSWORD"),
             Some("secret".to_string())
@@ -1233,7 +1233,7 @@ mod parser_tests {
 
     #[test]
     fn legacy_env_missing_key_returns_none() {
-        let contents = "BEADS_DOLT_SERVER_HOST=10.9.0.105\n";
+        let contents = "BEADS_DOLT_SERVER_HOST=dolt.example\n";
         assert_eq!(parse_legacy_env_value(contents, "BEADS_DOLT_PASSWORD"), None);
     }
 
@@ -1257,7 +1257,7 @@ mod parser_tests {
 mod password_resolution_tests {
     use super::*;
 
-    const SECTION: &str = "10.9.0.105:3307";
+    const SECTION: &str = "dolt.example:3307";
 
     fn write(dir: &Path, name: &str, contents: &str) -> PathBuf {
         let path = dir.join(name);
@@ -1453,7 +1453,7 @@ mod password_resolution_tests {
         let cred_path = write(
             tmp.path(),
             "credentials",
-            "[10.9.0.1:3307]\npassword=other-server-password\n",
+            "[other.example:3307]\npassword=other-server-password\n",
         );
         let env_values = [
             ("BEADS_DOLT_PASSWORD", None),

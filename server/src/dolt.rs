@@ -1026,7 +1026,7 @@ mod tests {
     #[test]
     fn debug_output_never_contains_the_password_value() {
         let config = DoltConnectConfig {
-            host: "10.9.0.105".to_string(),
+            host: "dolt.example".to_string(),
             port: 3307,
             user: "beads".to_string(),
             password: Some("super-secret-value".to_string()),
@@ -1043,7 +1043,7 @@ mod tests {
             "факт наличия пароля должен оставаться видимым: {rendered}"
         );
         // остальные поля по-прежнему диагностируемы
-        assert!(rendered.contains("10.9.0.105"));
+        assert!(rendered.contains("dolt.example"));
         assert!(rendered.contains("beads"));
     }
 

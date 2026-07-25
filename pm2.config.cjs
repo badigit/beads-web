@@ -14,6 +14,23 @@ const path = require('path');
 
 const REPO_ROOT = __dirname;
 
+// Адрес центрального Dolt — внутренний, а репозиторий публичный, поэтому в нём
+// его нет. Значения берутся из окружения машины (User-level env задаёт
+// BEADS_DOLT_SERVER_HOST/PORT/USER); этот файл читает pm2 CLI в пользовательском
+// шелле, так что они здесь доступны. Не задано — config.rs дефолтится на
+// localhost и пишет об этом в свой лог.
+const DOLT_ENV_VARS = [
+  'BEADS_DOLT_SERVER_HOST',
+  'BEADS_DOLT_SERVER_PORT',
+  'BEADS_DOLT_SERVER_USER',
+];
+
+// Переменная со значением `undefined` дошла бы до процесса строкой "undefined",
+// что хуже отсутствия: config.rs счёл бы её заданной.
+const doltEnv = Object.fromEntries(
+  DOLT_ENV_VARS.filter((name) => process.env[name]).map((name) => [name, process.env[name]])
+);
+
 module.exports = {
   apps: [
     {
@@ -27,9 +44,7 @@ module.exports = {
       restart_delay: 3000,
       env: {
         PORT: '3056',
-        BEADS_DOLT_SERVER_HOST: '10.9.0.105',
-        BEADS_DOLT_SERVER_PORT: '3307',
-        BEADS_DOLT_SERVER_USER: 'beads',
+        ...doltEnv,
         // Под pm2 stdout и так не терминал, поэтому вкладка не откроется и без
         // этой строки. Оставлена явно: рестартов у сервиса много, а лишняя
         // вкладка поверх уже открытого UI раздражает сразу (bweb-vqt).

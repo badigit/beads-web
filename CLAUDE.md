@@ -104,7 +104,7 @@ The more specific the memory, the more useful it is next time. No reusable insig
 - npm package name: `beads-web`
 - Default branch: `main` (merged from production, production branch kept for now)
 - 7 themes implemented with CSS variables and persistence (`src/lib/themes.ts`)
-- **Direct Dolt is the primary local deployment**: single binary (`bin/beads-web-win-x64-direct.exe`) on port **3056**, reads all databases straight from the central Dolt server (10.9.0.105:3307) — no per-project bd CLI needed for reads. Run via pm2 (`pm2.config.cjs`) or `scripts/start-direct-dolt.ps1`; build via `scripts/build-windows-direct.ps1`; docs in `docs/direct-dolt.md`
+- **Direct Dolt is the primary local deployment**: single binary (`bin/beads-web-win-x64-direct.exe`) on port **3056**, reads all databases straight from the central Dolt server — no per-project bd CLI needed for reads. Its address is **not** in this repo (it is public): `BEADS_DOLT_SERVER_HOST`/`PORT`/`USER` come from the machine's User-level env, the password from `%APPDATA%\beads\credentials`. Run via pm2 (`pm2.config.cjs`) or `scripts/start-direct-dolt.ps1`; build via `scripts/build-windows-direct.ps1`; docs in `docs/direct-dolt.md`
 - Frontend test suite: Vitest, 15 files / 120 tests, all green (`npm test`)
 - Windows compatibility fixed (multi-drive paths, validation)
 - GitHub Releases CI configured (`.github/workflows/release.yml`) — cross-platform binaries on tag push

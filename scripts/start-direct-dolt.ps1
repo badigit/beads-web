@@ -28,9 +28,10 @@ if (-not (Test-Path -LiteralPath $binary)) {
 # the Dolt server address. Do not add file reading or binary lookup back -- a new
 # setting is resolved ONLY in config.rs (see CLAUDE.md).
 $env:PORT = "$Port"
-$env:BEADS_DOLT_SERVER_HOST = "10.9.0.105"
-$env:BEADS_DOLT_SERVER_PORT = "3307"
-$env:BEADS_DOLT_SERVER_USER = "beads"
+# Адрес центрального Dolt внутренний, а репозиторий публичный — здесь его нет.
+# BEADS_DOLT_SERVER_HOST/PORT/USER приходят из окружения машины (User-level env)
+# и наследуются дочерним процессом как есть. Не заданы — config.rs дефолтится на
+# localhost и сообщает об этом в $errLog.
 # Вывод уходит в лог-файлы ниже, поэтому stdout не терминал и вкладка не
 # открылась бы и так. Оставлено явно, чтобы намерение читалось (bweb-vqt).
 $env:BEADS_WEB_NO_BROWSER = "1"
