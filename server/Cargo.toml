@@ -28,7 +28,15 @@ thiserror = "1"
 directories = "5"
 serde_yaml = "0.9"
 regex = "1"
-mysql_async = "0.34"
+# default-features off убирает C-тулчейн из графа. На 0.34 этого было мало: там
+# mysql_common тянул zstd (=> zstd-sys => bindgen/cmake) БЕЗУСЛОВНО. С 0.37/0.38
+# zstd ушёл за фичу binlog (`binlog = [dep:zstd]`), поэтому minimal-rust без
+# binlog даёт граф вообще без C: уходят bindgen, clang-sys, cmake, libz-sys.
+# minimal-rust = flate2/rust_backend (чистый Rust). Мы читаем из Dolt только
+# String/i32/i64 (dolt.rs) — конверсии bigdecimal/rust_decimal/time/frunk не
+# нужны; подключение plain-TCP по mesh (build_opts не ставит ssl_opts) — TLS-фича
+# тоже не нужна; binlog/репликацию не читаем.
+mysql_async = { version = "0.37", default-features = false, features = ["minimal-rust"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
 [dev-dependencies]
