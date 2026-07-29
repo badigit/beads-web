@@ -8,6 +8,12 @@ import {
   createProject,
   type CreateProjectInput,
 } from "@/lib/db";
+import {
+  findUnlistedDatabases,
+  ignoredNamesForProject,
+  loadIgnoredDatabases,
+  addIgnoredDatabases,
+} from "@/lib/dolt-autosync";
 import type { Project, Tag, BeadCounts } from "@/types";
 
 interface UseProjectsResult {
@@ -17,6 +23,8 @@ interface UseProjectsResult {
   error: Error | null;
   showArchived: boolean;
   refetch: () => Promise<void>;
+  /** Refetch, preceded by a scan for Dolt databases missing from the registry. */
+  refresh: () => Promise<void>;
   addProject: (input: CreateProjectInput) => Promise<Project>;
   updateProjectTags: (projectId: string, tags: Tag[]) => void;
   archiveProject: (id: string) => Promise<void>;
@@ -34,9 +42,12 @@ export function useProjects(): UseProjectsResult {
   const loadingRef = useRef(0);
   const beadsAbortRef = useRef<AbortController | null>(null);
   const showArchivedRef = useRef(false);
+  const projectsRef = useRef<Project[]>([]);
+  const syncedRef = useRef(false);
 
-  // Keep ref in sync with state
+  // Keep refs in sync with state
   useEffect(() => { showArchivedRef.current = showArchived; }, [showArchived]);
+  useEffect(() => { projectsRef.current = projects; }, [projects]);
 
   const fetchProjects = useCallback(async () => {
     const loadId = ++loadingRef.current;
@@ -212,9 +223,61 @@ export function useProjects(): UseProjectsResult {
   }, [fetchProjects]);
 
   const deleteProject = useCallback(async (id: string) => {
+    // Remember the removal so the auto-sync below does not bring the database
+    // back on the next refresh.
+    const removed = projectsRef.current.find((project) => project.id === id);
+    if (removed) {
+      addIgnoredDatabases(ignoredNamesForProject(removed.name, removed.path));
+    }
     await api.projects.delete(id);
     await fetchProjects();
   }, [fetchProjects]);
+
+  /**
+   * Register Dolt databases that have no project yet.
+   *
+   * A database created straight on the central server (`bd init`) is invisible
+   * in the dashboard until it lands in the local registry — this closes that
+   * gap without the user going through Add Project.
+   */
+  const syncDoltDatabases = useCallback(async (): Promise<number> => {
+    let unlisted: Awaited<ReturnType<typeof api.dolt.databases>>["databases"] = [];
+    try {
+      const [{ databases }, existing] = await Promise.all([
+        api.dolt.databases(),
+        getProjectsWithTags(true),
+      ]);
+      unlisted = findUnlistedDatabases(
+        databases,
+        existing.map((project) => project.name),
+        loadIgnoredDatabases()
+      );
+    } catch (err) {
+      // Dolt being unreachable must not take the project list down with it.
+      console.error("Dolt auto-sync: failed to list databases", err);
+      return 0;
+    }
+
+    let added = 0;
+    for (const database of unlisted) {
+      try {
+        await createProject({
+          name: database.project_name,
+          path: `dolt://${database.name}`,
+          localPath: database.local_path,
+        });
+        added++;
+      } catch (err) {
+        console.error(`Dolt auto-sync: failed to add "${database.name}"`, err);
+      }
+    }
+    return added;
+  }, []);
+
+  const refresh = useCallback(async () => {
+    await syncDoltDatabases();
+    await fetchProjects();
+  }, [syncDoltDatabases, fetchProjects]);
 
   const toggleShowArchived = useCallback(() => {
     setShowArchived(prev => !prev);
@@ -228,6 +291,16 @@ export function useProjects(): UseProjectsResult {
     };
   }, [fetchProjects, showArchived]);
 
+  // Pick up databases created outside the dashboard — once per mount, after the
+  // list is on screen, so discovery never delays the first paint.
+  useEffect(() => {
+    if (syncedRef.current) return;
+    syncedRef.current = true;
+    syncDoltDatabases().then((added) => {
+      if (added > 0) fetchProjects();
+    });
+  }, [syncDoltDatabases, fetchProjects]);
+
   return {
     projects,
     isLoading,
@@ -235,6 +308,7 @@ export function useProjects(): UseProjectsResult {
     error,
     showArchived,
     refetch: fetchProjects,
+    refresh,
     addProject,
     updateProjectTags,
     archiveProject,

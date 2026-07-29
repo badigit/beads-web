@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 
 
 
-import { Plus, Github, Filter, X, Archive, LayoutGrid, List, ArrowDownAZ, Clock } from "lucide-react";
+import { Plus, Github, Filter, X, Archive, LayoutGrid, List, ArrowDownAZ, Clock, RefreshCw } from "lucide-react";
 
 import { AddProjectDialog } from "@/components/add-project-dialog";
 import { HomeBeadSearch } from "@/components/home-bead-search";
@@ -24,10 +24,20 @@ export default function ProjectsPage() {
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
-  const { projects, isLoading, loadingStatus, error, showArchived, addProject, updateProjectTags, refetch, archiveProject, unarchiveProject, deleteProject, toggleShowArchived } = useProjects();
+  const { projects, isLoading, loadingStatus, error, showArchived, addProject, updateProjectTags, refetch, refresh, archiveProject, unarchiveProject, deleteProject, toggleShowArchived } = useProjects();
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const { view, setView } = useProjectsView();
   const { sort, setSort } = useProjectsSort();
   const { toast } = useToast();
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const isListView = view === "list";
   const collectionClass = isListView
@@ -167,6 +177,19 @@ export default function ProjectsPage() {
                 </Button>
               </div>
             )}
+            <Button
+              variant="ghost"
+              size="md"
+              mode="icon"
+              aria-label="Refresh projects"
+              disabled={isRefreshing}
+              onClick={handleRefresh}
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
+                aria-hidden="true"
+              />
+            </Button>
             <Button variant="mono" size="md" onClick={() => setIsAddDialogOpen(true)}>
               <Plus aria-hidden="true" />
               Add Project
