@@ -218,33 +218,26 @@ export function BeadDetail({
           isDesignDocFullScreen && "invisible"
         )}
       >
-          <div className="mb-3 flex justify-end">
-            <SpawnSessionButton
-              beadId={bead.id}
-              projectPath={projectPath}
-              wrapperClassName="max-w-[60%]"
-            />
-          </div>
-
           <div className="space-y-2">
             <h2 className="text-xl font-semibold leading-tight text-t-primary">
-              <span className="mr-2 whitespace-nowrap font-mono text-sm font-medium text-t-muted">
-                {ticketNumber !== undefined && (
-                  <CopyableText copyText={`#${ticketNumber}`} className="text-t-secondary">
-                    #{ticketNumber}
-                  </CopyableText>
-                )}
-                {ticketNumber !== undefined && " "}
-                <CopyableText copyText={bead.id} className="inline-block max-w-[200px] truncate align-bottom">
-                  {bead.id}
-                </CopyableText>
-              </span>
               <EditableField
                 value={bead.title}
                 onSave={handleSaveTitle}
                 disabled={isReadOnly}
               />
             </h2>
+
+            <p className="text-xs font-mono text-t-muted">
+              {ticketNumber !== undefined && (
+                <CopyableText copyText={`#${ticketNumber}`} className="font-semibold text-t-secondary">
+                  #{ticketNumber}
+                </CopyableText>
+              )}
+              {ticketNumber !== undefined && " "}
+              <CopyableText copyText={bead.id} className="inline-block max-w-[200px] truncate align-bottom">
+                {bead.id}
+              </CopyableText>
+            </p>
 
             {/* Worktree path */}
             {bead.issue_type !== "epic" && hasWorktree && worktreeStatus?.worktree_path && (
@@ -290,6 +283,13 @@ export function BeadDetail({
               <Calendar className="size-3.5" aria-hidden="true" />
               <span>{formatShortDate(bead.created_at)}</span>
             </span>
+            <SpawnSessionButton
+              beadId={bead.id}
+              projectPath={projectPath}
+              size="xs"
+              className="h-6 px-2 text-[11px]"
+              wrapperClassName="ml-auto"
+            />
           </div>
 
           {parentEpic && onChildClick && (

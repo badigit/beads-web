@@ -7,7 +7,6 @@ import { CheckCircle2, ChevronDown, ChevronRight, Layers, Loader2, MessageSquare
 import { CopyableText } from "@/components/copyable-text";
 import { DependencyBadge } from "@/components/dependency-badge";
 import { DesignDocPreview } from "@/components/design-doc-preview";
-import { SpawnSessionButton } from "@/components/spawn-session-button";
 import { SubtaskList, ChildPRStatus } from "@/components/subtask-list";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -269,18 +268,6 @@ export function EpicCard({
     </div>
   );
 
-  // Shared "start a Claude session" button — placed next to closeButton so it
-  // reaches all three layout variants below
-  const spawnButton = (
-    <SpawnSessionButton
-      beadId={epic.id}
-      projectPath={projectPath}
-      size="xs"
-      className="w-full"
-      wrapperClassName="pt-2"
-    />
-  );
-
   // Shared design doc section
   const designSection = hasDesignDoc && projectPath && (
     <div className="pt-2 border-t border-b-strong">
@@ -327,7 +314,6 @@ export function EpicCard({
             </div>
             {progressSection}
             {closeButton}
-            {spawnButton}
             {childrenSection}
           </div>
         </div>
@@ -385,7 +371,6 @@ export function EpicCard({
 
           {progressSection}
           {closeButton}
-          {spawnButton}
           {designSection}
           {childrenSection}
         </div>
@@ -466,7 +451,6 @@ export function EpicCard({
         </div>
 
         {closeButton}
-        {spawnButton}
         {designSection}
         {childrenSection}
 

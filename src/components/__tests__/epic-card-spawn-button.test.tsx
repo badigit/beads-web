@@ -50,19 +50,19 @@ beforeEach(() => {
   layoutMock.mockReturnValue('standard');
 });
 
-describe('EpicCard — Claude session button', () => {
+describe('EpicCard — no Claude session button', () => {
   it.each(['standard', 'compact-row', 'property-tags'])(
-    'renders the session button in the %s layout',
+    'does not render the session button in the %s layout',
     (layout) => {
       layoutMock.mockReturnValue(layout);
       render(<EpicCard {...defaultProps} />);
       expect(
-        screen.getByRole('button', { name: /start claude session for bweb-en5/i })
-      ).toBeEnabled();
+        screen.queryByRole('button', { name: /start claude session for bweb-en5/i })
+      ).not.toBeInTheDocument();
     }
   );
 
-  it('hides the session button for dolt-only projects', () => {
+  it('does not render the session button for dolt-only projects', () => {
     render(<EpicCard {...defaultProps} projectPath="dolt://beads-web" />);
     expect(
       screen.queryByRole('button', { name: /start claude session/i })
