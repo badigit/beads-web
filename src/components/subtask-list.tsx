@@ -210,12 +210,14 @@ export function SubtaskList({
               </p>
             )}
           </div>
-          <div className={cn(
-            "flex-shrink-0 text-[9px] font-medium uppercase tracking-wide",
-            getStatusColor(child.status)
-          )}>
-            {child.status.replace('_', ' ')}
-          </div>
+          {variant === "detail" && (
+            <div className={cn(
+              "flex-shrink-0 text-[9px] font-medium uppercase tracking-wide",
+              getStatusColor(child.status)
+            )}>
+              {child.status.replace('_', ' ')}
+            </div>
+          )}
         </button>
       ))}
       {hasMore && (

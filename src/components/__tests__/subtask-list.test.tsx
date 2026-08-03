@@ -16,6 +16,7 @@ describe('SubtaskList variants', () => {
     expect(screen.getByText(CHILD.title)).toBeInTheDocument();
     expect(screen.queryByText(CHILD.id)).toBeNull();
     expect(screen.queryByText(CHILD.description)).toBeNull();
+    expect(screen.queryByText('open')).toBeNull();
   });
 
   it('shows the complete id and description in an epic detail card', () => {
@@ -23,5 +24,6 @@ describe('SubtaskList variants', () => {
 
     expect(screen.getByText(CHILD.id)).toBeInTheDocument();
     expect(screen.getByText(CHILD.description)).toBeInTheDocument();
+    expect(screen.getByText('open')).toBeInTheDocument();
   });
 });
