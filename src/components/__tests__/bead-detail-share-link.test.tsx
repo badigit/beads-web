@@ -30,6 +30,8 @@ describe('bead detail — compact header', () => {
     );
 
     expect(screen.queryByRole('button', { name: 'Copy link to this bead' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull();
   });
 
   it('renders the ticket and bead ids before the title', () => {

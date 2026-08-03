@@ -26,6 +26,8 @@ export interface SubtaskListProps {
   isExpanded?: boolean;
   /** PR status for each child task, keyed by bead ID */
   childPRStatuses?: Map<string, ChildPRStatus>;
+  /** Dashboard rows hide redundant project IDs and descriptions. */
+  variant?: "dashboard" | "detail";
 }
 
 /**
@@ -155,6 +157,7 @@ export function SubtaskList({
   maxCollapsed = 3,
   isExpanded = false,
   childPRStatuses,
+  variant = "dashboard",
 }: SubtaskListProps) {
   if (childTasks.length === 0) {
     return (
@@ -178,7 +181,7 @@ export function SubtaskList({
           }}
           aria-label={`Open task: ${child.title}`}
           className={cn(
-            "w-full flex items-start gap-2 px-2 py-1.5 rounded-md",
+            "w-full flex items-start gap-2 px-2 py-1 rounded-md",
             "hover:bg-surface-overlay transition-colors text-left",
             "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-t-tertiary",
             "group"
@@ -190,16 +193,18 @@ export function SubtaskList({
           </div>
           <div className="flex-1 min-w-0">
             <p className={cn(
-              "text-xs font-medium group-hover:underline",
+              "text-[11px] font-medium leading-tight group-hover:underline",
               child.status === 'closed' && "line-through text-t-muted",
               child.status !== 'closed' && "text-t-secondary"
             )}>
-              <span className="mr-1.5 font-mono text-[10px] font-normal text-t-muted no-underline">
-                {child.id}
-              </span>
+              {variant === "detail" && (
+                <span className="mr-1.5 font-mono text-[10px] font-normal text-t-muted no-underline">
+                  {child.id}
+                </span>
+              )}
               {truncate(child.title, 50)}
             </p>
-            {child.description && (
+            {variant === "detail" && child.description && (
               <p className="text-[10px] text-t-muted mt-0.5">
                 {truncate(child.description, 60)}
               </p>

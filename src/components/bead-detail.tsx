@@ -3,14 +3,12 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 
 import {
-  ArrowLeft,
   Calendar,
   Circle,
   Layers,
   Link2,
   Plus,
   Square,
-  X,
 } from "lucide-react";
 
 import { BeadPRSection } from "@/components/bead-pr-section";
@@ -220,21 +218,11 @@ export function BeadDetail({
           isDesignDocFullScreen && "invisible"
         )}
       >
-          {/* Header with Back button */}
-          <div className="flex items-center justify-between mb-4">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onOpenChange(false)}
-              className="gap-1.5 -ml-2"
-            >
-              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-              Back
-            </Button>
+          <div className="mb-3 flex justify-end">
             <SpawnSessionButton
               beadId={bead.id}
               projectPath={projectPath}
-              wrapperClassName="items-end max-w-[60%]"
+              wrapperClassName="max-w-[60%]"
             />
           </div>
 
@@ -415,6 +403,7 @@ export function BeadDetail({
                   onChildClick={onChildClick}
                   isExpanded={true}
                   childPRStatuses={childPRStatuses}
+                  variant="detail"
                 />
               </div>
             </div>
@@ -435,15 +424,6 @@ export function BeadDetail({
 
           {/* Children slot for comments + timeline */}
           {children && <div className="mt-6">{children}</div>}
-
-        {/* Close button */}
-        <button
-          onClick={() => onOpenChange(false)}
-          className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-        >
-          <X className="h-4 w-4" />
-          <span className="sr-only">Close</span>
-        </button>
       </div>
 
       {/* Add Subtask Dialog (for epics) */}

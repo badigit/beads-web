@@ -208,6 +208,7 @@ export default function KanbanBoard() {
     detailBead,
     isDetailOpen,
     openBead,
+    openNestedBead,
     handleDetailOpenChange,
     navigateToBead,
   } = useBeadDetail(beads);
@@ -418,7 +419,7 @@ export default function KanbanBoard() {
           projectPath={project?.path ?? ""}
           projectId={projectId}
           allBeads={beads}
-          onChildClick={openBead}
+          onChildClick={openNestedBead}
           onUpdate={refreshBeads}
         >
           <CommentList
