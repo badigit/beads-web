@@ -1,17 +1,9 @@
-import { render, screen, fireEvent, act } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
 
 import type { Bead } from '@/types';
 
 import { BeadDetail } from '../bead-detail';
-
-const writeText = vi.fn();
-
-Object.defineProperty(navigator, 'clipboard', {
-  value: { writeText },
-  writable: true,
-  configurable: true,
-});
 
 const BEAD: Bead = {
   id: 'bweb-6pv',
@@ -26,58 +18,52 @@ const BEAD: Bead = {
   comments: [],
 };
 
-/** Fire an event and let the copy promise settle (CopyableText awaits clipboard). */
-async function fireAndSettle(fire: () => void) {
-  await act(async () => {
-    fire();
-  });
-}
-
-describe('bead detail — copy link', () => {
-  beforeEach(() => {
-    writeText.mockReset();
-    writeText.mockResolvedValue(undefined);
-  });
-
-  it('renders a "copy link" affordance next to the id when a projectId is given', () => {
+describe('bead detail — compact header', () => {
+  it('does not render a separate copy-link control', () => {
     render(
       <BeadDetail
         bead={BEAD}
         open={true}
         onOpenChange={vi.fn()}
         projectId="p1"
-      />
-    );
-
-    expect(screen.getByRole('button', { name: 'Copy link to this bead' })).toBeInTheDocument();
-  });
-
-  it('copies the full shareable URL, not just the bead id', async () => {
-    render(
-      <BeadDetail
-        bead={BEAD}
-        open={true}
-        onOpenChange={vi.fn()}
-        projectId="p1"
-      />
-    );
-
-    const button = screen.getByRole('button', { name: 'Copy link to this bead' });
-    await fireAndSettle(() => fireEvent.click(button));
-
-    const expectedUrl = `${window.location.origin}/project?id=p1&bead=bweb-6pv`;
-    expect(writeText).toHaveBeenCalledWith(expectedUrl);
-  });
-
-  it('does not render the affordance when there is no projectId (nothing to link to)', () => {
-    render(
-      <BeadDetail
-        bead={BEAD}
-        open={true}
-        onOpenChange={vi.fn()}
       />
     );
 
     expect(screen.queryByRole('button', { name: 'Copy link to this bead' })).toBeNull();
+  });
+
+  it('renders the ticket and bead ids before the title', () => {
+    render(
+      <BeadDetail
+        bead={BEAD}
+        open={true}
+        onOpenChange={vi.fn()}
+        projectId="p1"
+      />
+    );
+
+    expect(screen.getByText('bweb-6pv')).toBeInTheDocument();
+    expect(screen.getByText(BEAD.title)).toBeInTheDocument();
+  });
+
+  it('links a child task back to its parent epic', () => {
+    const epic = { ...BEAD, id: 'bweb-epic', title: 'Parent epic', issue_type: 'epic' as const };
+    const child = { ...BEAD, id: 'bweb-child', parent_id: epic.id };
+    const onChildClick = vi.fn();
+
+    render(
+      <BeadDetail
+        bead={child}
+        open={true}
+        onOpenChange={vi.fn()}
+        allBeads={[epic, child]}
+        onChildClick={onChildClick}
+      />
+    );
+
+    const parentLink = screen.getByRole('button', { name: /epic: bweb-epic\s*parent epic/i });
+    expect(parentLink).toBeInTheDocument();
+    fireEvent.click(parentLink);
+    expect(onChildClick).toHaveBeenCalledWith(epic);
   });
 });

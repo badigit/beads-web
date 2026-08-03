@@ -7,7 +7,6 @@ import {
   Calendar,
   Circle,
   Layers,
-  Link,
   Link2,
   Plus,
   Square,
@@ -26,7 +25,6 @@ import { Button } from "@/components/ui/button";
 import { usePRSettings } from "@/hooks/use-pr-settings";
 import { toast } from "@/hooks/use-toast";
 import * as api from "@/lib/api";
-import { buildBeadShareUrl } from "@/lib/bead-link";
 import {
   formatShortDate,
   formatStatus,
@@ -47,7 +45,7 @@ export interface BeadDetailProps {
   onOpenChange: (open: boolean) => void;
   children?: React.ReactNode;
   projectPath?: string;
-  /** Project id from the board URL (`?id=`), used to build the shareable bead link. */
+  /** Project id from the board URL (`?id=`). Kept for caller compatibility. */
   projectId?: string | null;
   allBeads?: Bead[];
   onChildClick?: (child: Bead) => void;
@@ -67,7 +65,6 @@ export function BeadDetail({
   onOpenChange,
   children,
   projectPath,
-  projectId,
   allBeads,
   onChildClick,
   onCleanup,
@@ -87,13 +84,6 @@ export function BeadDetail({
   const prEnabled = prSettings.enabled;
   const isReadOnly = !projectPath;
   const isDolt = projectPath ? isDoltProject(projectPath) : false;
-
-  // Shareable deep link to this bead's detail card (`/project?id=...&bead=...`).
-  // Built with the actual page origin so a copied link works from any tab.
-  const shareUrl = useMemo(() => {
-    if (!projectId || typeof window === "undefined") return null;
-    return buildBeadShareUrl(window.location.origin, projectId, bead.id);
-  }, [projectId, bead.id]);
 
   const handleSaveTitle = useCallback(async (newTitle: string) => {
     if (!projectPath) return;
@@ -153,6 +143,11 @@ export function BeadDetail({
       .map(childId => allBeads.find(b => b.id === childId))
       .filter((b): b is Bead => b !== undefined);
   }, [isEpic, bead.children, allBeads]);
+
+  const parentEpic = useMemo(() => {
+    if (!bead.parent_id || !allBeads) return undefined;
+    return allBeads.find((candidate) => candidate.id === bead.parent_id);
+  }, [bead.parent_id, allBeads]);
 
   // Resolve related tasks from IDs
   const relatedTasks = useMemo(() => {
@@ -226,7 +221,7 @@ export function BeadDetail({
         )}
       >
           {/* Header with Back button */}
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-4">
             <Button
               variant="ghost"
               size="sm"
@@ -243,30 +238,19 @@ export function BeadDetail({
             />
           </div>
 
-          <div className="space-y-4">
-            {/* Ticket Number + Bead ID */}
-            <p className="text-xs font-mono text-t-muted">
-              {ticketNumber !== undefined && (
-                <CopyableText copyText={`#${ticketNumber}`} className="font-semibold text-t-secondary">
-                  #{ticketNumber}
-                </CopyableText>
-              )}
-              {ticketNumber !== undefined && " "}
-              <CopyableText copyText={bead.id} className="inline-block max-w-[200px] truncate align-bottom">
-                {bead.id}
-              </CopyableText>
-              {shareUrl && (
-                <>
-                  {" "}
-                  <CopyableText copyText={shareUrl} label="Copy link to this bead">
-                    <Link className="size-3" aria-hidden="true" />
-                  </CopyableText>
-                </>
-              )}
-            </p>
-
-            {/* Title */}
+          <div className="space-y-2">
             <h2 className="text-xl font-semibold leading-tight text-t-primary">
+              <span className="mr-2 whitespace-nowrap font-mono text-sm font-medium text-t-muted">
+                {ticketNumber !== undefined && (
+                  <CopyableText copyText={`#${ticketNumber}`} className="text-t-secondary">
+                    #{ticketNumber}
+                  </CopyableText>
+                )}
+                {ticketNumber !== undefined && " "}
+                <CopyableText copyText={bead.id} className="inline-block max-w-[200px] truncate align-bottom">
+                  {bead.id}
+                </CopyableText>
+              </span>
               <EditableField
                 value={bead.title}
                 onSave={handleSaveTitle}
@@ -286,7 +270,7 @@ export function BeadDetail({
           </div>
 
           {/* Inline Metadata Row */}
-          <div className="mt-6 flex justify-center items-center gap-3 text-sm text-t-tertiary">
+          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-t-tertiary">
             <span className="flex items-center gap-1.5">
               {bead.issue_type === "epic" ? (
                 <Layers className="size-3.5" aria-hidden="true" />
@@ -319,6 +303,18 @@ export function BeadDetail({
               <span>{formatShortDate(bead.created_at)}</span>
             </span>
           </div>
+
+          {parentEpic && onChildClick && (
+            <button
+              type="button"
+              onClick={() => onChildClick(parentEpic)}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs text-t-secondary hover:bg-surface-overlay hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-t-tertiary"
+            >
+              <Layers className="size-3.5" aria-hidden="true" />
+              Epic: <span className="font-mono">{parentEpic.id}</span>
+              <span className="truncate">{parentEpic.title}</span>
+            </button>
+          )}
 
           {/* Worktree & PR Section */}
           {hasWorktree && projectPath && (
