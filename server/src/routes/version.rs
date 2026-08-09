@@ -14,7 +14,14 @@ use tracing::{info, warn};
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// GitHub repository for release checks.
-const GITHUB_REPO: &str = "weselow/beads-web";
+///
+/// This is deliberately THIS fork, not the upstream it was forked from
+/// (bweb-0q1). Pointing it upstream meant the banner offered "Update &
+/// Restart" for someone else's release — and that button overwrites the
+/// locally built `bin/beads-web-win-x64-direct.exe` that pm2 runs, silently
+/// rolling the machine back to upstream's build. A repo with no releases
+/// yet simply keeps the banner quiet: the 404 lands in `fallback_response`.
+const GITHUB_REPO: &str = "badigit/beads-web";
 
 /// Cache duration in seconds (1 hour).
 const CACHE_TTL_SECS: u64 = 3600;
@@ -552,6 +559,16 @@ rem Self-delete
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// bweb-0q1: the update check must never point at the upstream repo this
+    /// project was forked from. "Update & Restart" downloads that repo's
+    /// release binary over the locally built one pm2 serves — an upstream
+    /// pointer here turns the banner into a silent rollback button.
+    #[test]
+    fn test_release_checks_target_this_fork_not_upstream() {
+        assert_eq!(GITHUB_REPO, "badigit/beads-web");
+        assert!(!GITHUB_REPO.starts_with("weselow/"));
+    }
 
     #[test]
     fn test_is_newer() {

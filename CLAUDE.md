@@ -145,6 +145,14 @@ Single binary — frontend is embedded via rust-embed. No npm publish needed.
 
 - Tag `v*` triggers GitHub Actions → builds for macOS arm64/x64, Linux x64, Windows x64
 - Users download binary from GitHub Releases, run it, open http://localhost:3007
+- **The in-app update banner checks THIS fork** (`GITHUB_REPO` in
+  `server/src/routes/version.rs` = `badigit/beads-web`), never the upstream it was
+  forked from. It used to point upstream, which made "Update & Restart" download
+  someone else's release over the locally built `bin/beads-web-win-x64-direct.exe`
+  that pm2 runs — a silent rollback of every local change (bweb-0q1). While this
+  fork publishes no releases the check 404s into `fallback_response` and the banner
+  stays hidden; it starts working the moment a `v*` tag is pushed here. A test
+  pins the constant so an upstream merge cannot quietly restore it.
 - `npm run dev` (port 3007) works out of the box — `next.config.js` enables `output: 'export'` only for production builds, and in dev it proxies `/api/*` to the running backend (`BEADS_API_PORT`, default 3056). UI changes are visible instantly against live Dolt data, no binary rebuild needed.
 
 ## Rust toolchain (Windows dev machine)
