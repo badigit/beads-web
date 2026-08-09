@@ -5,9 +5,16 @@ import { FolderOpen, GitPullRequest, Link2, MessageSquare, Check, X, Clock } fro
 import { CopyableText } from "@/components/copyable-text";
 import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/hooks/use-theme";
-import { formatWorktreePath, isBlocked, truncate } from "@/lib/bead-utils";
+import {
+  formatWorktreePath,
+  getStatusBadgeClasses,
+  getStatusBadgeText,
+  isBlocked,
+  isDeferred,
+  truncate,
+} from "@/lib/bead-utils";
 import { cn } from "@/lib/utils";
-import type { Bead, WorktreeStatus, PRStatus, StatusBadgeInfo } from "@/types";
+import type { Bead, WorktreeStatus, PRStatus } from "@/types";
 
 export interface BeadCardProps {
   bead: Bead;
@@ -131,21 +138,6 @@ function getTypeLabel(bead: Bead): string {
   return bead.issue_type === "epic" ? "Epic" : "Task";
 }
 
-/**
- * Get badge variant class for status badges based on severity.
- * warning = orange (blocked, unknown), muted = gray (deferred), info = blue (hooked/waiting)
- */
-function getStatusBadgeClasses(variant: StatusBadgeInfo['variant']): string {
-  switch (variant) {
-    case 'warning':
-      return 'bg-blocked-accent/15 text-blocked-accent border-blocked-accent/30';
-    case 'muted':
-      return 'bg-t-muted/15 text-t-tertiary border-t-muted/30';
-    case 'info':
-      return 'bg-info/15 text-info border-info/30';
-  }
-}
-
 export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatus, isSelected = false, onSelect }: BeadCardProps) {
   const { layout } = useTheme();
   const blocked = isBlocked(bead, allBeads);
@@ -212,6 +204,33 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
 
   const isClosed = bead.status === 'closed';
 
+  // Status badge for beads whose raw status has no column of its own
+  // (deferred, blocked, hooked, unknown). A blocked bead already carries the
+  // BLOCKED badge, so the mapped one would just repeat it.
+  const statusBadgeText = getStatusBadgeText(bead);
+  const showStatusBadge = Boolean(
+    statusBadgeText && !(blocked && bead._originalStatus === 'blocked')
+  );
+  const statusBadgeVariant = bead._statusBadge?.variant ?? 'muted';
+  const statusBadgeClasses = getStatusBadgeClasses(statusBadgeVariant);
+
+  // Rendered as a <Badge> in the layouts that use them, and as a plain tag in
+  // property-tags, which builds its badge row out of spans.
+  const statusBadge = showStatusBadge && (
+    <Badge variant="outline" size="xs" className={cn("theme-badge", statusBadgeClasses)}>
+      {statusBadgeText}
+    </Badge>
+  );
+  const statusTag = showStatusBadge && (
+    <span className={cn("theme-badge text-[10px] font-medium px-1.5 py-0.5 border", statusBadgeClasses)}>
+      {statusBadgeText}
+    </span>
+  );
+
+  // Deferred work is parked on purpose — dim the card so it reads as inactive
+  // at a glance, without hiding it from the Open column (bweb-8md).
+  const deferred = isDeferred(bead);
+
   // ─── Layout: compact-row (Linear Minimal) ───
   if (layout === 'compact-row') {
     return (
@@ -223,6 +242,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
           "hover:bg-surface-overlay/50",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           isClosed && "opacity-40",
+          deferred && "opacity-60",
           isSelected && "bg-info/5 outline outline-1 outline-info/20"
         )}
       >
@@ -265,6 +285,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
 
         {/* Right badges */}
         <div className="flex items-center gap-1.5 shrink-0">
+          {statusBadge}
           {commentCount > 0 && (
             <span className="flex items-center gap-0.5 text-[11px] text-t-faint">
               <MessageSquare className="size-3" aria-hidden="true" />
@@ -287,6 +308,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           blocked && "border-l-3 border-l-danger",
           isClosed && "opacity-45",
+          deferred && "opacity-60 border-dashed",
           isSelected && "ring-2 ring-ring ring-offset-2 ring-offset-surface-base"
         )}
       >
@@ -326,6 +348,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
               Blocked
             </span>
           )}
+          {statusTag}
           <span className="theme-badge text-[10px] font-medium px-1.5 py-0.5 bg-surface-overlay text-t-tertiary">
             {getTypeLabel(bead)}
           </span>
@@ -358,6 +381,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
         "theme-card cursor-pointer bg-card border border-border/40 flex",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         blocked ? "border-l-4 border-l-danger" : "",
+        deferred && "opacity-60 border-dashed",
         isSelected && "ring-2 ring-ring ring-offset-2 ring-offset-background"
       )}
     >
@@ -394,15 +418,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
               {blocked && (
                 <Badge variant="destructive" appearance="light" size="xs" className="theme-badge">BLOCKED</Badge>
               )}
-              {bead._statusBadge && !(blocked && bead._originalStatus === 'blocked') && (
-                <Badge
-                  variant="outline"
-                  size="xs"
-                  className={cn("theme-badge", getStatusBadgeClasses(bead._statusBadge.variant))}
-                >
-                  {bead._statusBadge.label}
-                </Badge>
-              )}
+              {statusBadge}
               <Badge variant="outline" size="xs" className="theme-badge">{getTypeLabel(bead)}</Badge>
             </div>
           </div>

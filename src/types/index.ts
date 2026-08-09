@@ -130,6 +130,7 @@ export interface Bead {
   parent_id?: string;         // ID of parent epic (for child tasks)
   children?: string[];        // IDs of child tasks (for epics)
   design_doc?: string;        // Path like ".designs/{EPIC_ID}.md"
+  defer_until?: string | null; // ISO date set by `bd defer --until`; null when deferred indefinitely
   deps?: string[];            // Dependency IDs (blocking this task)
   blockers?: string[];        // COMPUTED: Tasks this blocks (derived from deps relationships)
   relates_to?: string[];      // Bead IDs with relates-to links (bidirectional "see also")

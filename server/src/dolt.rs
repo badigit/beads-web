@@ -747,8 +747,46 @@ async fn query_status_counts(
         .collect())
 }
 
+/// Returns `true` when `table` in `db_name` has a column called `column`.
+///
+/// Used to keep the issues query working against older Dolt schemas that
+/// predate a column — a missing column would otherwise fail the whole read.
+async fn has_column(
+    conn: &mut mysql_async::Conn,
+    db_name: &str,
+    table: &str,
+    column: &str,
+) -> bool {
+    let query = "SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS \
+                 WHERE TABLE_SCHEMA = :db AND TABLE_NAME = :tbl AND COLUMN_NAME = :col";
+    match conn
+        .exec_first::<i64, _, _>(
+            query,
+            mysql_async::params! { "db" => db_name, "tbl" => table, "col" => column },
+        )
+        .await
+    {
+        Ok(Some(count)) => count > 0,
+        Ok(None) => false,
+        Err(e) => {
+            warn!(
+                "Failed to introspect column {}.{} in db {}: {} — assuming absent",
+                table, column, db_name, e
+            );
+            false
+        }
+    }
+}
+
 /// Queries issues from a Dolt database.
 async fn query_issues(conn: &mut mysql_async::Conn, db_name: &str) -> Result<Vec<Bead>, DoltError> {
+    // `defer_until` arrived with a later bd schema; older databases don't have
+    // it, so select a NULL placeholder there and keep a single row-mapping path.
+    let defer_until_select = if has_column(conn, db_name, "issues", "defer_until").await {
+        "DATE_FORMAT(defer_until, '%Y-%m-%dT%H:%i:%sZ') AS defer_until"
+    } else {
+        "NULL AS defer_until"
+    };
     let query = format!(
         "SELECT id, title, description, `design`, status, priority, issue_type, \
          owner, assignee, \
@@ -756,9 +794,8 @@ async fn query_issues(conn: &mut mysql_async::Conn, db_name: &str) -> Result<Vec
          created_by, \
          DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_at, \
          DATE_FORMAT(closed_at, '%Y-%m-%dT%H:%i:%sZ') AS closed_at, \
-         close_reason \
-         FROM `{}`.issues",
-        db_name
+         close_reason, {defer_until_select} \
+         FROM `{db_name}`.issues"
     );
     let rows: Vec<Row> = conn
         .query(&query)
@@ -780,6 +817,7 @@ async fn query_issues(conn: &mut mysql_async::Conn, db_name: &str) -> Result<Vec
             updated_at: get_opt_str(row, "updated_at"),
             closed_at: get_opt_str(row, "closed_at"),
             close_reason: get_opt_str(row, "close_reason"),
+            defer_until: get_opt_str(row, "defer_until"),
             design_doc: get_opt_str(row, "design"),
             parent_id: None,
             children: None,

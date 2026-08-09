@@ -14,7 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import { usePRSettings } from "@/hooks/use-pr-settings";
 import { useTheme } from "@/hooks/use-theme";
 import * as api from "@/lib/api";
-import { isBlocked, truncate } from "@/lib/bead-utils";
+import { getStatusBadgeClasses, getStatusBadgeText, isBlocked, isDeferred, truncate } from "@/lib/bead-utils";
 import { closeBead } from "@/lib/cli";
 import { isDesignDocPath } from "@/lib/design-doc";
 import { computeEpicProgress } from "@/lib/epic-parser";
@@ -195,6 +195,23 @@ export function EpicCard({
 
   const { layout } = useTheme();
 
+  // Status badge for epics whose raw status has no column of its own — an
+  // epic deferred with `bd defer` otherwise looks exactly like live work
+  // (bweb-8md). Same muted treatment as BeadCard.
+  const deferred = isDeferred(epic);
+  const statusBadgeText = getStatusBadgeText(epic);
+  const statusBadge = statusBadgeText && (
+    <Badge
+      variant="outline"
+      className={cn(
+        "theme-badge text-[10px] px-2 py-0.5 font-semibold",
+        getStatusBadgeClasses(epic._statusBadge?.variant ?? "muted")
+      )}
+    >
+      {statusBadgeText}
+    </Badge>
+  );
+
   // Shared interaction props
   const interactionProps = {
     "data-bead-id": epic.id,
@@ -295,6 +312,7 @@ export function EpicCard({
           "theme-card cursor-pointer p-2.5 bg-card border border-epic/20",
           "hover:bg-surface-overlay/50",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-epic",
+          deferred && "opacity-60 border-dashed",
           isSelected && "bg-epic/5 outline outline-1 outline-epic/20"
         )}
       >
@@ -310,6 +328,7 @@ export function EpicCard({
                 {epic.id}
               </CopyableText>
               <span className="text-[13px] font-semibold text-t-primary truncate">{epic.title}</span>
+              {statusBadge}
               <span className="text-[10px] font-semibold text-epic shrink-0">EPIC</span>
             </div>
             {progressSection}
@@ -330,6 +349,7 @@ export function EpicCard({
           "theme-card cursor-pointer p-3 bg-card border border-epic/30",
           "hover:bg-surface-inset/30",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-epic",
+          deferred && "opacity-60 border-dashed",
           isSelected && "ring-2 ring-epic ring-offset-2 ring-offset-surface-base"
         )}
       >
@@ -361,6 +381,7 @@ export function EpicCard({
             <span className="theme-badge text-[10px] font-semibold px-1.5 py-0.5 bg-epic/15 text-epic">
               Epic
             </span>
+            {statusBadge}
             <span className="theme-badge text-[10px] px-1.5 py-0.5 bg-surface-overlay text-t-tertiary">
               {progressPercentage}% · {children.length} tasks
             </span>
@@ -387,6 +408,7 @@ export function EpicCard({
         "bg-surface-raised/70",
         "border border-b-default/60 border-l-2 border-l-epic",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-epic focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base",
+        deferred && "opacity-60 border-dashed",
         isSelected && "ring-2 ring-epic ring-offset-2 ring-offset-surface-base"
       )}
     >
@@ -409,6 +431,7 @@ export function EpicCard({
             </CopyableText>
           </div>
           <div className="flex items-center gap-1.5">
+            {statusBadge}
             <DependencyBadge
               deps={epic.deps}
               blockers={epic.blockers}

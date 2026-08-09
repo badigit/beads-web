@@ -1,12 +1,16 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  formatDeferUntil,
   formatStatus,
   formatShortDate,
   formatWorktreePath,
+  getStatusBadgeClasses,
+  getStatusBadgeText,
   getStatusDotColor,
   truncate,
   isBlocked,
+  isDeferred,
 } from '@/lib/bead-utils';
 
 describe('formatStatus', () => {
@@ -110,5 +114,77 @@ describe('isBlocked', () => {
 
   it('returns false when deps is null', () => {
     expect(isBlocked({ status: 'open', deps: null }, [])).toBe(false);
+  });
+});
+
+describe('isDeferred', () => {
+  it('detects a bead mapped from the deferred status', () => {
+    expect(isDeferred({ _originalStatus: 'deferred' })).toBe(true);
+  });
+
+  it('is false for other mapped statuses and for plain open beads', () => {
+    expect(isDeferred({ _originalStatus: 'blocked' })).toBe(false);
+    expect(isDeferred({})).toBe(false);
+  });
+});
+
+describe('formatDeferUntil', () => {
+  it('formats a same-year date without the year', () => {
+    const thisYear = new Date().getFullYear();
+    const result = formatDeferUntil(`${thisYear}-08-25T12:00:00Z`);
+    expect(result).toBe('Aug 25');
+  });
+
+  it('keeps the year when the return date is in another year', () => {
+    const nextYear = new Date().getFullYear() + 1;
+    expect(formatDeferUntil(`${nextYear}-08-25T12:00:00Z`)).toBe(`Aug 25, ${nextYear}`);
+  });
+
+  it('returns null for missing or unparseable dates', () => {
+    expect(formatDeferUntil(null)).toBeNull();
+    expect(formatDeferUntil(undefined)).toBeNull();
+    expect(formatDeferUntil('not a date')).toBeNull();
+  });
+});
+
+describe('getStatusBadgeText', () => {
+  const badge = { label: 'Deferred', variant: 'muted' } as const;
+
+  it('appends the return date for a bead deferred until a date', () => {
+    const thisYear = new Date().getFullYear();
+    expect(
+      getStatusBadgeText({
+        _originalStatus: 'deferred',
+        _statusBadge: badge,
+        defer_until: `${thisYear}-08-25T12:00:00Z`,
+      })
+    ).toBe('Deferred · Aug 25');
+  });
+
+  it('returns the bare label when deferred with no date', () => {
+    expect(
+      getStatusBadgeText({ _originalStatus: 'deferred', _statusBadge: badge, defer_until: null })
+    ).toBe('Deferred');
+  });
+
+  it('leaves other badges untouched', () => {
+    expect(
+      getStatusBadgeText({
+        _originalStatus: 'blocked',
+        _statusBadge: { label: 'Blocked', variant: 'warning' },
+      })
+    ).toBe('Blocked');
+  });
+
+  it('returns null for a bead with no badge', () => {
+    expect(getStatusBadgeText({})).toBeNull();
+  });
+});
+
+describe('getStatusBadgeClasses', () => {
+  it('maps deferred (muted) to the gray token, not the blocked orange', () => {
+    expect(getStatusBadgeClasses('muted')).toContain('t-muted');
+    expect(getStatusBadgeClasses('warning')).toContain('blocked-accent');
+    expect(getStatusBadgeClasses('info')).toContain('info');
   });
 });

@@ -357,6 +357,8 @@ export default function KanbanBoard() {
           owners={filters.owners}
           onOwnerToggle={toggleOwner}
           availableOwners={availableOwners}
+          hideDeferred={filters.hideDeferred}
+          onHideDeferredChange={(value) => setFilters({ hideDeferred: value })}
           onClearFilters={clearFilters}
           hasActiveFilters={hasActiveFilters}
           // Memory

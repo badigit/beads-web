@@ -68,3 +68,43 @@ describe("useBeadFilters search trimming", () => {
     expect(result.current.filteredBeads).toHaveLength(2);
   });
 });
+
+describe("useBeadFilters hideDeferred", () => {
+  // `deferred` is mapped onto the open column, so only the raw status survives.
+  const beads = [
+    bead("tvp-live"),
+    bead("tvp-0i3", { _originalStatus: "deferred" }),
+  ];
+
+  it("keeps deferred beads on the board by default", () => {
+    const { result } = renderHook(() => useBeadFilters(beads, ticketNumbers));
+
+    expect(result.current.filteredBeads.map((b) => b.id)).toEqual(["tvp-live", "tvp-0i3"]);
+    expect(result.current.hasActiveFilters).toBe(false);
+  });
+
+  it("drops them when hideDeferred is on", () => {
+    const { result } = renderHook(() => useBeadFilters(beads, ticketNumbers));
+
+    act(() => {
+      result.current.setFilters({ hideDeferred: true });
+    });
+
+    expect(result.current.filteredBeads.map((b) => b.id)).toEqual(["tvp-live"]);
+    expect(result.current.hasActiveFilters).toBe(true);
+    expect(result.current.activeFilterCount).toBe(1);
+  });
+
+  it("brings them back when the filter is cleared", () => {
+    const { result } = renderHook(() => useBeadFilters(beads, ticketNumbers));
+
+    act(() => {
+      result.current.setFilters({ hideDeferred: true });
+    });
+    act(() => {
+      result.current.clearFilters();
+    });
+
+    expect(result.current.filteredBeads).toHaveLength(2);
+  });
+});

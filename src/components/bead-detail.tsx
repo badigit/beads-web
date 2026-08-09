@@ -27,6 +27,8 @@ import {
   formatShortDate,
   formatStatus,
   formatWorktreePath,
+  getStatusBadgeClasses,
+  getStatusBadgeText,
   getStatusDotColor,
 } from "@/lib/bead-utils";
 import { updateTitle, updateDescription, updateStatus as cliUpdateStatus } from "@/lib/cli";
@@ -276,6 +278,17 @@ export function BeadDetail({
                   <option value="inreview">In Review</option>
                   <option value="closed">Closed</option>
                 </select>
+              )}
+              {/* The select only knows the four columns — a bead deferred or
+                  blocked upstream would silently read as its column (bweb-8md). */}
+              {getStatusBadgeText(bead) && (
+                <Badge
+                  variant="outline"
+                  size="xs"
+                  className={cn(getStatusBadgeClasses(bead._statusBadge?.variant ?? "muted"))}
+                >
+                  {getStatusBadgeText(bead)}
+                </Badge>
               )}
             </span>
             <span className="text-t-faint" aria-hidden="true">•</span>

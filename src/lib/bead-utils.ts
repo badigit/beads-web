@@ -5,7 +5,15 @@
  * and subtask-list components.
  */
 
-import type { BeadStatus } from "@/types";
+import type { Bead, BeadStatus, StatusBadgeInfo } from "@/types";
+
+/**
+ * Subset of a bead that carries its deferral state.
+ *
+ * `deferred` is not a column of its own — the parser maps it onto `open` and
+ * keeps the raw status in `_originalStatus` (see STATUS_MAP in `@/types`).
+ */
+type DeferrableBead = Pick<Bead, "_originalStatus" | "defer_until">;
 
 /**
  * Format status for display (e.g., "in_progress" -> "In Progress")
@@ -57,6 +65,64 @@ export function formatShortDate(dateString: string): string {
     });
   } catch {
     return dateString;
+  }
+}
+
+/**
+ * True when the bead was put aside with `bd defer`.
+ *
+ * Deferred beads deliberately stay in the Open column (bweb-8md decided
+ * against a fifth column), so the badge and the dimmed card are the only
+ * thing telling them apart from live work.
+ */
+export function isDeferred(bead: DeferrableBead): boolean {
+  return bead._originalStatus === "deferred";
+}
+
+/**
+ * Format a `defer_until` date compactly for a card badge: "Aug 25", with the
+ * year appended when it differs from the current one ("Aug 25, 2027").
+ *
+ * Returns null for a missing or unparseable date — the caller then shows the
+ * bare "Deferred" label, which is the correct reading: no scheduled return.
+ */
+export function formatDeferUntil(dateString: string | null | undefined): string | null {
+  if (!dateString) return null;
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return null;
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+}
+
+/**
+ * Text of the status badge on a card: the mapped label, plus the return date
+ * for beads deferred with `--until` ("Deferred · Aug 25").
+ *
+ * Returns null when the bead has no badge (its raw status IS its column).
+ */
+export function getStatusBadgeText(bead: DeferrableBead & Pick<Bead, "_statusBadge">): string | null {
+  if (!bead._statusBadge) return null;
+  if (!isDeferred(bead)) return bead._statusBadge.label;
+  const until = formatDeferUntil(bead.defer_until);
+  return until ? `${bead._statusBadge.label} · ${until}` : bead._statusBadge.label;
+}
+
+/**
+ * Tailwind classes for a status badge, by severity.
+ * warning = orange (blocked, unknown), muted = gray (deferred), info = blue (hooked/waiting)
+ */
+export function getStatusBadgeClasses(variant: StatusBadgeInfo["variant"]): string {
+  switch (variant) {
+    case "warning":
+      return "bg-blocked-accent/15 text-blocked-accent border-blocked-accent/30";
+    case "muted":
+      return "bg-t-muted/15 text-t-tertiary border-t-muted/30";
+    case "info":
+      return "bg-info/15 text-info border-info/30";
   }
 }
 

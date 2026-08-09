@@ -78,6 +78,10 @@ interface QuickFilterBarProps {
   unknownStatusCount?: number;
   /** List of unknown status names for tooltip */
   unknownStatusNames?: string[];
+  /** Whether beads deferred via `bd defer` are hidden from the board */
+  hideDeferred?: boolean;
+  /** Callback when the "Hide deferred" toggle changes */
+  onHideDeferredChange?: (value: boolean) => void;
   /** Callback when "New" button is clicked */
   onNewBead?: () => void;
 }
@@ -131,6 +135,8 @@ export function QuickFilterBar({
   hasProjectPath = true,
   unknownStatusCount = 0,
   unknownStatusNames = [],
+  hideDeferred = false,
+  onHideDeferredChange,
   onNewBead,
 }: QuickFilterBarProps) {
   const currentSortValue = `${sortField}_${sortDirection}`;
@@ -352,6 +358,19 @@ export function QuickFilterBar({
               {option.label}
             </DropdownMenuCheckboxItem>
           ))}
+
+          {onHideDeferredChange && (
+            <>
+              <DropdownMenuSeparator className="bg-surface-overlay" />
+              <DropdownMenuCheckboxItem
+                checked={hideDeferred}
+                onCheckedChange={(checked) => onHideDeferredChange(Boolean(checked))}
+                className="text-t-secondary focus:bg-surface-overlay focus:text-t-primary"
+              >
+                Hide deferred
+              </DropdownMenuCheckboxItem>
+            </>
+          )}
 
           {availableOwners.length > 0 && (
             <>

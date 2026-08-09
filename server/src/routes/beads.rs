@@ -182,6 +182,10 @@ pub struct Bead {
     pub closed_at: Option<String>,
     #[serde(default)]
     pub close_reason: Option<String>,
+    /// Set by `bd defer --until <date>`: when the bead comes back on its own.
+    /// `None` for beads deferred without a date (manual `bd undefer`).
+    #[serde(default)]
+    pub defer_until: Option<String>,
     #[serde(default)]
     pub comments: Option<Vec<Comment>>,
     #[serde(default, alias = "parent")]
@@ -1800,6 +1804,28 @@ mod tests {
         assert_eq!(edges[0].dep_type, "blocks");
     }
 
+    /// bweb-8md: `bd defer --until <date>` writes `defer_until`, and the board
+    /// shows that date on the card. Dropping the field here makes a scheduled
+    /// bead indistinguishable from one deferred indefinitely.
+    #[test]
+    fn test_defer_until_is_parsed_and_serialized() {
+        let json = r#"{"id":"bweb-lk4","title":"T","status":"deferred","defer_until":"2026-08-24T21:00:00Z"}"#;
+        let bead: Bead = serde_json::from_str(json).unwrap();
+        assert_eq!(bead.defer_until.as_deref(), Some("2026-08-24T21:00:00Z"));
+        assert!(serde_json::to_string(&bead)
+            .unwrap()
+            .contains("2026-08-24T21:00:00Z"));
+    }
+
+    #[test]
+    fn test_defer_until_absent_is_none() {
+        // Beads deferred without a date (and every non-deferred bead) simply
+        // have no such key — that must not fail the parse.
+        let json = r#"{"id":"tvp-0i3","title":"T","status":"deferred"}"#;
+        let bead: Bead = serde_json::from_str(json).unwrap();
+        assert!(bead.defer_until.is_none());
+    }
+
     #[test]
     fn test_relates_to_serialized_in_json() {
         // Test that relates_to is included in serialized JSON output
@@ -1817,6 +1843,7 @@ mod tests {
             updated_at: None,
             closed_at: None,
             close_reason: None,
+            defer_until: None,
             comments: None,
             parent_id: None,
             children: None,

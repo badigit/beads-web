@@ -3,7 +3,7 @@
 import { Check, Circle, Clock, FileCheck, GitPullRequest, GitMerge } from "lucide-react";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { truncate } from "@/lib/bead-utils";
+import { isDeferred, truncate } from "@/lib/bead-utils";
 import { cn } from "@/lib/utils";
 import type { Bead, BeadStatus } from "@/types";
 
@@ -195,7 +195,9 @@ export function SubtaskList({
             <p className={cn(
               "text-[11px] font-medium leading-tight group-hover:underline",
               child.status === 'closed' && "line-through text-t-muted",
-              child.status !== 'closed' && "text-t-secondary"
+              child.status !== 'closed' && "text-t-secondary",
+              // Deferred children sit among live ones in the same list (bweb-8md).
+              isDeferred(child) && "italic text-t-muted"
             )}>
               {variant === "detail" && (
                 <span className="mr-1.5 font-mono text-[10px] font-normal text-t-muted no-underline">
@@ -215,7 +217,9 @@ export function SubtaskList({
               "flex-shrink-0 text-[9px] font-medium uppercase tracking-wide",
               getStatusColor(child.status)
             )}>
-              {child.status.replace('_', ' ')}
+              {/* Show the raw status ("deferred", "blocked") rather than the
+                  column it was mapped onto — the column is already implied. */}
+              {(child._originalStatus ?? child.status).replace('_', ' ')}
             </div>
           )}
         </button>

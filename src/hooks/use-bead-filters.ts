@@ -9,6 +9,7 @@
 
 import { useState, useMemo, useCallback, useEffect } from "react";
 
+import { isDeferred } from "@/lib/bead-utils";
 import type { Bead, BeadStatus } from "@/types";
 
 /**
@@ -39,6 +40,12 @@ export interface BeadFilters {
   sortDirection: SortDirection;
   /** Filter to items updated (worked on) today */
   todayOnly: boolean;
+  /**
+   * Hide beads deferred with `bd defer`. They live in the Open column by
+   * design, so among a few hundred open beads they are easy to lose — this
+   * takes them off the board without closing them (bweb-8md).
+   */
+  hideDeferred: boolean;
 }
 
 /**
@@ -74,6 +81,7 @@ const DEFAULT_FILTERS: BeadFilters = {
   sortField: "created_at",
   sortDirection: "desc",
   todayOnly: false,
+  hideDeferred: false,
 };
 
 /**
@@ -208,6 +216,10 @@ export function useBeadFilters(
         if (!filters.owners.includes(bead.owner)) return false;
       }
 
+      // Deferred filter — `deferred` is mapped onto the open column, so the
+      // raw status is the only thing left to match on.
+      if (filters.hideDeferred && isDeferred(bead)) return false;
+
       // Today filter - items updated (worked on) today, regardless of status.
       // Uses client-computed todayStr to avoid SSR/client hydration mismatch.
       // Before mount (todayStr is null), skip filtering to match SSR output.
@@ -245,6 +257,7 @@ export function useBeadFilters(
       filters.priorities.length > 0 ||
       filters.owners.length > 0 ||
       filters.todayOnly ||
+      filters.hideDeferred ||
       filters.sortField !== DEFAULT_FILTERS.sortField ||
       filters.sortDirection !== DEFAULT_FILTERS.sortDirection
     );
@@ -259,6 +272,7 @@ export function useBeadFilters(
     if (filters.priorities.length > 0) count++;
     if (filters.owners.length > 0) count++;
     if (filters.todayOnly) count++;
+    if (filters.hideDeferred) count++;
     return count;
   }, [filters]);
 
