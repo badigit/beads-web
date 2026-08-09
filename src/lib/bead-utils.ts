@@ -80,6 +80,16 @@ export function isDeferred(bead: DeferrableBead): boolean {
 }
 
 /**
+ * How a deferred card is dimmed — one source of truth for BeadCard and
+ * EpicCard, both of which apply it in each of their three layouts.
+ *
+ * Grayscale on top of the opacity drop is what makes it read as parked at a
+ * glance: it kills the accent colours (the epic's purple rail, priority bars,
+ * PR state) that otherwise keep the card looking live.
+ */
+export const DEFERRED_CARD_CLASSES = "opacity-50 grayscale border-dashed";
+
+/**
  * Format a `defer_until` date compactly for a card badge: "Aug 25", with the
  * year appended when it differs from the current one ("Aug 25, 2027").
  *

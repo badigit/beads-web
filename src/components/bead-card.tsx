@@ -6,6 +6,7 @@ import { CopyableText } from "@/components/copyable-text";
 import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/hooks/use-theme";
 import {
+  DEFERRED_CARD_CLASSES,
   formatWorktreePath,
   getStatusBadgeClasses,
   getStatusBadgeText,
@@ -242,7 +243,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
           "hover:bg-surface-overlay/50",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           isClosed && "opacity-40",
-          deferred && "opacity-60",
+          deferred && DEFERRED_CARD_CLASSES,
           isSelected && "bg-info/5 outline outline-1 outline-info/20"
         )}
       >
@@ -308,7 +309,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           blocked && "border-l-3 border-l-danger",
           isClosed && "opacity-45",
-          deferred && "opacity-60 border-dashed",
+          deferred && DEFERRED_CARD_CLASSES,
           isSelected && "ring-2 ring-ring ring-offset-2 ring-offset-surface-base"
         )}
       >
@@ -381,7 +382,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
         "theme-card cursor-pointer bg-card border border-border/40 flex",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         blocked ? "border-l-4 border-l-danger" : "",
-        deferred && "opacity-60 border-dashed",
+        deferred && DEFERRED_CARD_CLASSES,
         isSelected && "ring-2 ring-ring ring-offset-2 ring-offset-background"
       )}
     >

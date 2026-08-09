@@ -1,11 +1,28 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+import { DEFERRED_CARD_CLASSES } from '@/lib/bead-utils';
 import { loadProjectBeads } from '@/lib/beads-parser';
 import type { Bead, Epic } from '@/types';
 
 import { BeadCard } from '../bead-card';
 import { EpicCard } from '../epic-card';
+
+/** Split once: toHaveClass takes classes one per argument. */
+const DIMMED = DEFERRED_CARD_CLASSES.split(' ');
+
+/**
+ * Asserts a card carries none of the dimming classes.
+ *
+ * Checked one by one on purpose: `not.toHaveClass(a, b)` passes as soon as a
+ * SINGLE class is missing, so an active card that somehow kept `opacity-50`
+ * would still slip through.
+ */
+function expectNotDimmed(el: Element | null) {
+  for (const cls of DIMMED) {
+    expect(el).not.toHaveClass(cls);
+  }
+}
 
 /**
  * bweb-8md: a bead put aside with `bd defer` stays in the Open column by
@@ -79,7 +96,7 @@ describe('BeadCard — deferred marker', () => {
   it.each(LAYOUTS)('dims the card in %s layout', (layout) => {
     const { container } = renderBeadCard(deferredBead(), layout);
 
-    expect(container.querySelector('[data-bead-id="tvp-0i3.1"]')).toHaveClass('opacity-60');
+    expect(container.querySelector('[data-bead-id="tvp-0i3.1"]')).toHaveClass(...DIMMED);
   });
 
   it.each(LAYOUTS)('leaves a plain open bead unmarked in %s layout', (layout) => {
@@ -87,7 +104,7 @@ describe('BeadCard — deferred marker', () => {
     const { container } = renderBeadCard(open, layout);
 
     expect(screen.queryByText(/Deferred/)).not.toBeInTheDocument();
-    expect(container.querySelector('[data-bead-id="tvp-0i3.1"]')).not.toHaveClass('opacity-60');
+    expectNotDimmed(container.querySelector('[data-bead-id="tvp-0i3.1"]'));
   });
 
   it.each(LAYOUTS)('appends the defer_until date in %s layout', (layout) => {
@@ -123,7 +140,7 @@ describe('EpicCard — deferred marker', () => {
   it.each(LAYOUTS)('dims the card in %s layout', (layout) => {
     const { container } = renderEpicCard(epic, layout);
 
-    expect(container.querySelector('[data-bead-id="tvp-0i3"]')).toHaveClass('opacity-60');
+    expect(container.querySelector('[data-bead-id="tvp-0i3"]')).toHaveClass(...DIMMED);
   });
 
   it('leaves an active epic unmarked', () => {
@@ -131,7 +148,7 @@ describe('EpicCard — deferred marker', () => {
     const { container } = renderEpicCard(active, 'standard');
 
     expect(screen.queryByText(/Deferred/)).not.toBeInTheDocument();
-    expect(container.querySelector('[data-bead-id="tvp-0i3"]')).not.toHaveClass('opacity-60');
+    expectNotDimmed(container.querySelector('[data-bead-id="tvp-0i3"]'));
   });
 });
 

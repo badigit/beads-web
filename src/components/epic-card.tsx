@@ -14,7 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import { usePRSettings } from "@/hooks/use-pr-settings";
 import { useTheme } from "@/hooks/use-theme";
 import * as api from "@/lib/api";
-import { getStatusBadgeClasses, getStatusBadgeText, isBlocked, isDeferred, truncate } from "@/lib/bead-utils";
+import { DEFERRED_CARD_CLASSES, getStatusBadgeClasses, getStatusBadgeText, isBlocked, isDeferred, truncate } from "@/lib/bead-utils";
 import { closeBead } from "@/lib/cli";
 import { isDesignDocPath } from "@/lib/design-doc";
 import { computeEpicProgress } from "@/lib/epic-parser";
@@ -312,7 +312,7 @@ export function EpicCard({
           "theme-card cursor-pointer p-2.5 bg-card border border-epic/20",
           "hover:bg-surface-overlay/50",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-epic",
-          deferred && "opacity-60 border-dashed",
+          deferred && DEFERRED_CARD_CLASSES,
           isSelected && "bg-epic/5 outline outline-1 outline-epic/20"
         )}
       >
@@ -349,7 +349,7 @@ export function EpicCard({
           "theme-card cursor-pointer p-3 bg-card border border-epic/30",
           "hover:bg-surface-inset/30",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-epic",
-          deferred && "opacity-60 border-dashed",
+          deferred && DEFERRED_CARD_CLASSES,
           isSelected && "ring-2 ring-epic ring-offset-2 ring-offset-surface-base"
         )}
       >
@@ -408,7 +408,7 @@ export function EpicCard({
         "bg-surface-raised/70",
         "border border-b-default/60 border-l-2 border-l-epic",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-epic focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base",
-        deferred && "opacity-60 border-dashed",
+        deferred && DEFERRED_CARD_CLASSES,
         isSelected && "ring-2 ring-epic ring-offset-2 ring-offset-surface-base"
       )}
     >
