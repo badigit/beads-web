@@ -6,6 +6,12 @@ const config: Config = {
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
+    // src/lib holds class strings too — getStatusDotColor, getStatusBadgeClasses
+    // and DEFERRED_CARD_CLASSES in bead-utils.ts. Leaving it out made those
+    // classes silently absent from the CSS: the markup carried `bg-t-muted/15`
+    // and `grayscale`, the element rendered transparent and unfiltered, and
+    // nothing failed — not the build, not the type-check, not a test.
+    './src/lib/**/*.{js,ts,jsx,tsx}',
   ],
   theme: {
     extend: {
