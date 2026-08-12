@@ -6,13 +6,13 @@
 use mysql_async::prelude::*;
 use mysql_async::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row, TxOpts};
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::net::TcpStream;
 use tracing::{info, warn};
 
-use crate::routes::beads::{Bead, Comment};
+use crate::routes::beads::{Bead, Comment, DOLT_PATH_PREFIX};
 
 /// Connection parameters for a Dolt SQL server (central or per-project host).
 #[derive(Clone)]
@@ -1052,6 +1052,159 @@ pub fn database_name_for_project(project_path: &Path) -> Option<String> {
         .map(|name| format!("beads_{}", name))
 }
 
+/// Каталоги, внутри которых проекта заведомо нет, а файлов очень много.
+const SKIPPED_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "out",
+    "vendor",
+    "__pycache__",
+];
+
+/// Насколько глубоко от корня искать проекты. `~/GitHub/dimcoder` лежит на
+/// первом уровне, `~/GitHub/MCP/umnico-mcp` — на втором; третий берётся про
+/// запас, дальше цена обхода растёт быстрее пользы.
+pub const PROJECT_SCAN_DEPTH: usize = 3;
+
+/// Имя Dolt-базы, которое проект ОБЪЯВИЛ о себе в `.beads/`.
+///
+/// Отличие от [`database_name_for_project`] принципиальное, хотя функции
+/// похожи. Та отвечает на вопрос «этот проект открыт — где его беды?» и в
+/// крайнем случае конструирует имя из имени каталога. Здесь направление
+/// обратное: по каталогу с диска решается, какой из существующих баз он
+/// принадлежит, и догадка тут даёт ложную привязку — любая папка `tmp` стала
+/// бы владельцем базы `beads_tmp`. Поэтому берётся только записанное.
+fn declared_database_name(project_path: &Path) -> Option<String> {
+    let metadata_path = project_path.join(".beads").join("metadata.json");
+    if let Ok(contents) = std::fs::read_to_string(&metadata_path) {
+        if let Ok(meta) = serde_json::from_str::<BeadsMetadata>(&contents) {
+            if meta.backend.as_deref() != Some("dolt") {
+                return None;
+            }
+            if let Some(db_name) = meta.dolt_database.filter(|n| !n.is_empty()) {
+                return Some(db_name);
+            }
+        }
+    }
+
+    // Тот же запасной вариант, что и у database_name_for_project: bd называет
+    // базу `beads_<issue-prefix>`, и это не догадка, а его собственное правило.
+    let config_path = project_path.join(".beads").join("config.yaml");
+    let contents = std::fs::read_to_string(&config_path).ok()?;
+    let config = serde_yaml::from_str::<BeadsConfig>(&contents).ok()?;
+    config
+        .issue_prefix
+        .filter(|p| !p.is_empty())
+        .map(|prefix| format!("beads_{}", prefix))
+}
+
+/// Один ли это каталог. На Windows регистр в путях не значим, на остальных
+/// системах — значим, и `Src` там законно отличается от `src`.
+fn same_dir(a: &Path, b: &Path) -> bool {
+    if cfg!(windows) {
+        a.as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&b.as_os_str().to_string_lossy())
+    } else {
+        a == b
+    }
+}
+
+/// Корни, в которых имеет смысл искать репозитории на ЭТОЙ машине.
+///
+/// Первыми идут родители уже заведённых проектов: где лежит один репозиторий,
+/// там лежат и остальные, и этот список не надо ниоткуда конфигурировать. Для
+/// чистой машины, где в реестре ещё нет ни одного пути, добавлены типовые
+/// каталоги — иначе первый же запуск на ноутбуке не нашёл бы ничего.
+pub fn project_roots(known_project_paths: &[String]) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let push = |candidate: PathBuf, roots: &mut Vec<PathBuf>| {
+        // `~/GitHub` и `~/github` — на Windows один и тот же каталог, и без
+        // сравнения без учёта регистра он попал бы в список дважды. Тогда путь
+        // проекта уезжал бы в написании того корня, который обошли первым, и
+        // расходился с тем, что уже записано в реестре.
+        if candidate.is_dir() && !roots.iter().any(|root| same_dir(root, &candidate)) {
+            roots.push(candidate);
+        }
+    };
+
+    for path in known_project_paths {
+        if path.starts_with(DOLT_PATH_PREFIX) {
+            continue;
+        }
+        if let Some(parent) = Path::new(path).parent() {
+            push(parent.to_path_buf(), &mut roots);
+        }
+    }
+
+    if let Some(home) = directories::UserDirs::new().map(|d| d.home_dir().to_path_buf()) {
+        for name in ["GitHub", "github", "src", "projects", "code", "dev", "repos", "git"] {
+            push(home.join(name), &mut roots);
+        }
+    }
+
+    roots
+}
+
+/// Индекс «имя Dolt-базы -> каталог проекта на этой машине».
+///
+/// Путь к репозиторию машинно-зависим, поэтому он нигде не хранится: ни в
+/// git-репозитории, ни в самой базе — на другом ПК он был бы другим. Вместо
+/// этого связь восстанавливается из того, что реально лежит на диске: у каждого
+/// репозитория с бедами есть `.beads/`, где записано имя его базы.
+pub fn index_local_projects(roots: &[PathBuf], max_depth: usize) -> HashMap<String, PathBuf> {
+    let mut index: HashMap<String, PathBuf> = HashMap::new();
+    // Обход в ширину и с головы очереди: корни разобраны в том порядке, в
+    // котором их вернул `project_roots`, где первыми идут каталоги уже
+    // заведённых проектов. Порядок решает исход коллизии, поэтому он не должен
+    // зависеть от того, как устроена очередь.
+    let mut queue: VecDeque<(PathBuf, usize)> =
+        roots.iter().map(|r| (r.clone(), 0usize)).collect();
+
+    while let Some((dir, depth)) = queue.pop_front() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+
+        // read_dir не обещает порядок, а он решает исход коллизии: две копии
+        // одного репозитория объявляют одну базу. Сортировка делает выбор
+        // повторяемым, иначе привязка скакала бы между запусками.
+        let mut children: Vec<PathBuf> = entries
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_type().map(|t| t.is_dir()).unwrap_or(false))
+            .map(|entry| entry.path())
+            .collect();
+        children.sort();
+
+        for child in children {
+            let Some(name) = child.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            // Скрытые каталоги отсекают заодно и `.claude/worktrees/*`: worktree
+            // несёт ту же `.beads/metadata.json`, что и основной checkout, и
+            // претендовал бы на ту же базу.
+            if name.starts_with('.') || SKIPPED_DIRS.contains(&name) {
+                continue;
+            }
+
+            if let Some(db_name) = declared_database_name(&child) {
+                index.entry(db_name).or_insert(child);
+                // Внутрь найденного проекта не спускаемся: вложенные checkout'ы
+                // того же репозитория — не отдельные проекты.
+                continue;
+            }
+
+            if depth + 1 < max_depth {
+                queue.push_back((child, depth + 1));
+            }
+        }
+    }
+
+    index
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1337,5 +1490,200 @@ mod tests {
         assert!(validate_discovered_database_name("tvp`; DROP DATABASE tvp; --").is_err());
         assert!(validate_discovered_database_name("a b").is_err());
         assert!(validate_discovered_database_name("").is_err());
+    }
+
+    /// Заводит каталог проекта с `.beads/metadata.json` на указанную базу.
+    fn make_project(root: &Path, rel: &str, database: &str) -> PathBuf {
+        let dir = root.join(rel);
+        std::fs::create_dir_all(dir.join(".beads")).unwrap();
+        std::fs::write(
+            dir.join(".beads").join("metadata.json"),
+            format!(
+                r#"{{"database":"dolt","backend":"dolt","dolt_mode":"server","dolt_database":"{database}"}}"#
+            ),
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn index_matches_by_declared_database_not_by_folder_name() {
+        // Ровно тот случай, ради которого индекс и нужен: имя базы и имя папки
+        // расходятся (skyrem лежит в skycomm-reminders, sbc — в sberbusiness_client).
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let skyrem = make_project(root, "skycomm-reminders", "skyrem");
+        let sbc = make_project(root, "sberbusiness_client", "sbc");
+
+        let index = index_local_projects(&[root.to_path_buf()], PROJECT_SCAN_DEPTH);
+
+        assert_eq!(index.get("skyrem"), Some(&skyrem));
+        assert_eq!(index.get("sbc"), Some(&sbc));
+        assert_eq!(index.get("skycomm-reminders"), None);
+    }
+
+    #[test]
+    fn index_finds_projects_nested_below_the_root() {
+        // ~/GitHub/MCP/umnico-mcp — второй уровень, такие в реестре есть.
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let nested = make_project(root, "MCP/umnico-mcp", "umnico");
+
+        let index = index_local_projects(&[root.to_path_buf()], PROJECT_SCAN_DEPTH);
+
+        assert_eq!(index.get("umnico"), Some(&nested));
+    }
+
+    #[test]
+    fn index_ignores_folder_without_beads_metadata() {
+        // Пустая папка `tmp` не должна становиться владельцем базы `tmp`:
+        // именно так выглядела бы догадка по имени каталога.
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("tmp")).unwrap();
+
+        let index = index_local_projects(&[root.to_path_buf()], PROJECT_SCAN_DEPTH);
+
+        assert!(index.is_empty());
+    }
+
+    #[test]
+    fn index_skips_hidden_dirs_so_worktrees_do_not_claim_the_database() {
+        // Worktree несёт ту же metadata.json, что и основной checkout.
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let main = make_project(root, "forum_match_vibe", "fmv");
+        make_project(root, "forum_match_vibe/.claude/worktrees/wt-1", "fmv");
+
+        let index = index_local_projects(&[root.to_path_buf()], PROJECT_SCAN_DEPTH);
+
+        assert_eq!(index.get("fmv"), Some(&main));
+    }
+
+    #[test]
+    fn index_does_not_descend_into_skipped_dirs() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        make_project(root, "node_modules/some-package", "hijacked");
+
+        let index = index_local_projects(&[root.to_path_buf()], PROJECT_SCAN_DEPTH);
+
+        assert!(index.is_empty());
+    }
+
+    #[test]
+    fn index_collision_is_stable_across_runs() {
+        // Две копии одного репозитория объявляют одну базу — выбор не должен
+        // зависеть от порядка, в котором ОС вернула записи каталога.
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        make_project(root, "a-copy", "dup");
+        make_project(root, "b-copy", "dup");
+
+        let first = index_local_projects(&[root.to_path_buf()], PROJECT_SCAN_DEPTH);
+        let second = index_local_projects(&[root.to_path_buf()], PROJECT_SCAN_DEPTH);
+
+        assert_eq!(first.get("dup"), second.get("dup"));
+        assert_eq!(first.get("dup"), Some(&root.join("a-copy")));
+    }
+
+    #[test]
+    fn declared_name_ignores_non_dolt_backend() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("sqlite-project");
+        std::fs::create_dir_all(dir.join(".beads")).unwrap();
+        std::fs::write(
+            dir.join(".beads").join("metadata.json"),
+            r#"{"backend":"sqlite","dolt_database":"whatever"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(declared_database_name(&dir), None);
+    }
+
+    #[test]
+    fn declared_name_falls_back_to_issue_prefix() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("prefixed");
+        std::fs::create_dir_all(dir.join(".beads")).unwrap();
+        std::fs::write(
+            dir.join(".beads").join("config.yaml"),
+            "issue-prefix: \"myproj\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            declared_database_name(&dir),
+            Some("beads_myproj".to_string())
+        );
+    }
+
+    #[test]
+    fn index_prefers_the_root_listed_first() {
+        // Порядок корней — это приоритет: каталоги уже заведённых проектов идут
+        // раньше типовых, и найденное в них не должно перебиваться.
+        let temp = tempfile::tempdir().unwrap();
+        let preferred = make_project(&temp.path().join("first"), "repo", "shared");
+        make_project(&temp.path().join("second"), "repo", "shared");
+
+        let index = index_local_projects(
+            &[temp.path().join("first"), temp.path().join("second")],
+            PROJECT_SCAN_DEPTH,
+        );
+
+        assert_eq!(index.get("shared"), Some(&preferred));
+    }
+
+    #[test]
+    fn project_roots_take_parents_of_known_projects_and_skip_dolt_urls() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("GitHub/dimcoder")).unwrap();
+        std::fs::create_dir_all(root.join("GitHub/MCP/umnico-mcp")).unwrap();
+
+        let known = vec![
+            root.join("GitHub/dimcoder").to_string_lossy().to_string(),
+            root.join("GitHub/MCP/umnico-mcp")
+                .to_string_lossy()
+                .to_string(),
+            "dolt://orphan".to_string(),
+        ];
+        let roots = project_roots(&known);
+
+        assert!(roots.contains(&root.join("GitHub")));
+        assert!(roots.contains(&root.join("GitHub/MCP")));
+        // `dolt://orphan` не путь — родителя у него нет и быть не должно.
+        assert!(!roots.iter().any(|r| r.to_string_lossy().contains("dolt:")));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn project_roots_do_not_list_the_same_dir_twice_in_another_case() {
+        // На Windows `GitHub` и `github` — один каталог: попади он в список
+        // дважды, путь проекта уехал бы в написании обойденного первым.
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("GitHub/dimcoder")).unwrap();
+
+        let known = vec![
+            temp.path()
+                .join("GitHub/dimcoder")
+                .to_string_lossy()
+                .to_string(),
+            temp.path()
+                .join("github/dimcoder")
+                .to_string_lossy()
+                .to_string(),
+        ];
+        let roots = project_roots(&known);
+
+        // Реальный `~/GitHub` этой машины тоже попадает в список как типовой
+        // корень, поэтому считаем только то, что лежит внутри temp.
+        let prefix = temp.path().to_string_lossy().to_lowercase();
+        let matching = roots
+            .iter()
+            .filter(|r| r.to_string_lossy().to_lowercase().starts_with(&prefix))
+            .count();
+        assert_eq!(matching, 1);
+        assert!(roots.contains(&temp.path().join("GitHub")));
     }
 }

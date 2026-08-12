@@ -64,6 +64,25 @@ pub async fn dolt_databases(
                     };
                 }
             }
+
+            // База, которой нет в реестре, приходит без пути: связь «база ->
+            // папка» живёт только внутри репозитория, в его `.beads/`. Ищем её
+            // на диске, иначе автоподхват заведёт проект как `dolt://` — без
+            // Memory, Agents и bd CLI, и привязывать придётся руками на каждой
+            // машине. Скан включается только когда есть кого искать.
+            if databases.iter().any(|database| database.local_path.is_none()) {
+                let known: Vec<String> = projects.iter().map(|p| p.path.clone()).collect();
+                let index =
+                    dolt::index_local_projects(&dolt::project_roots(&known), dolt::PROJECT_SCAN_DEPTH);
+                for database in &mut databases {
+                    if database.local_path.is_none() {
+                        database.local_path = index
+                            .get(&database.name)
+                            .map(|dir| dir.to_string_lossy().replace('\\', "/"));
+                    }
+                }
+            }
+
             Json(serde_json::json!({ "databases": databases }))
         }
         Err(e) => Json(serde_json::json!({

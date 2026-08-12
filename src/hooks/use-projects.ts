@@ -13,6 +13,7 @@ import {
   ignoredNamesForProject,
   loadIgnoredDatabases,
   addIgnoredDatabases,
+  projectRegistrationFor,
 } from "@/lib/dolt-autosync";
 import type { Project, Tag, BeadCounts } from "@/types";
 
@@ -238,7 +239,10 @@ export function useProjects(): UseProjectsResult {
    *
    * A database created straight on the central server (`bd init`) is invisible
    * in the dashboard until it lands in the local registry — this closes that
-   * gap without the user going through Add Project.
+   * gap without the user going through Add Project. The server resolves each
+   * database to its project folder when that folder exists on this machine, so
+   * the registration is a full filesystem project rather than a read-only
+   * `dolt://` entry (see `projectRegistrationFor`).
    */
   const syncDoltDatabases = useCallback(async (): Promise<number> => {
     let unlisted: Awaited<ReturnType<typeof api.dolt.databases>>["databases"] = [];
@@ -261,11 +265,7 @@ export function useProjects(): UseProjectsResult {
     let added = 0;
     for (const database of unlisted) {
       try {
-        await createProject({
-          name: database.project_name,
-          path: `dolt://${database.name}`,
-          localPath: database.local_path,
-        });
+        await createProject(projectRegistrationFor(database));
         added++;
       } catch (err) {
         console.error(`Dolt auto-sync: failed to add "${database.name}"`, err);

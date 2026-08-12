@@ -6,6 +6,7 @@ import {
   ignoredNamesForProject,
   loadIgnoredDatabases,
   addIgnoredDatabases,
+  projectRegistrationFor,
 } from "@/lib/dolt-autosync";
 
 const db = (name: string, projectName = name): DoltDatabase => ({
@@ -44,6 +45,48 @@ describe("findUnlistedDatabases", () => {
   it("keeps unrelated databases when some are ignored", () => {
     const result = findUnlistedDatabases([db("fmv"), db("sbc")], [], ["sbc"]);
     expect(result.map((d) => d.name)).toEqual(["fmv"]);
+  });
+});
+
+describe("projectRegistrationFor", () => {
+  it("registers a database with a known folder as a filesystem project", () => {
+    // Only filesystem projects get Memory, Agents and the bd CLI.
+    expect(
+      projectRegistrationFor({
+        name: "skyrem",
+        project_name: "skyrem",
+        local_path: "C:/Users/Dee/GitHub/skycomm-reminders",
+      })
+    ).toEqual({
+      name: "skycomm-reminders",
+      path: "C:/Users/Dee/GitHub/skycomm-reminders",
+    });
+  });
+
+  it("falls back to dolt:// when no folder was found on this machine", () => {
+    expect(projectRegistrationFor({ name: "fmv", project_name: "fmv" })).toEqual({
+      name: "fmv",
+      path: "dolt://fmv",
+    });
+  });
+
+  it("treats a blank local path as no folder at all", () => {
+    expect(
+      projectRegistrationFor({ name: "fmv", project_name: "fmv", local_path: "   " })
+    ).toEqual({ name: "fmv", path: "dolt://fmv" });
+  });
+
+  it("handles backslash paths and trailing separators", () => {
+    expect(
+      projectRegistrationFor({
+        name: "sbc",
+        project_name: "sbc",
+        local_path: "C:\\Users\\Dee\\GitHub\\sberbusiness_client\\",
+      })
+    ).toEqual({
+      name: "sberbusiness_client",
+      path: "C:\\Users\\Dee\\GitHub\\sberbusiness_client\\",
+    });
   });
 });
 

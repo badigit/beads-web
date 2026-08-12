@@ -38,6 +38,32 @@ export function findUnlistedDatabases(
   });
 }
 
+/** Last segment of a path, the way Add Project derives a name from a folder. */
+function folderName(path: string): string {
+  const parts = path.replace(/[/\\]+$/, "").split(/[/\\]/);
+  return parts[parts.length - 1] ?? "";
+}
+
+/**
+ * How a discovered database should be registered.
+ *
+ * When the server managed to locate the project folder, the database is
+ * registered as an ordinary filesystem project: only those get Memory, Agents
+ * and the bd CLI. Beads still come from the central Dolt server — the source is
+ * resolved from the folder's own `.beads/metadata.json`. Without a folder the
+ * previous read-only `dolt://` mode is all that is available.
+ */
+export function projectRegistrationFor(database: DoltDatabase): {
+  name: string;
+  path: string;
+} {
+  const localPath = database.local_path?.trim();
+  if (!localPath) {
+    return { name: database.project_name, path: `dolt://${database.name}` };
+  }
+  return { name: folderName(localPath) || database.project_name, path: localPath };
+}
+
 /** Names a removed project should be remembered under: its own and its database. */
 export function ignoredNamesForProject(name: string, path: string): string[] {
   const database = path.startsWith("dolt://") ? path.slice("dolt://".length) : null;
