@@ -6,9 +6,11 @@
 use mysql_async::prelude::*;
 use mysql_async::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row, TxOpts};
 use serde::Deserialize;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tracing::{info, warn};
 
@@ -91,6 +93,9 @@ pub struct DoltManager {
     pool: Pool,
     config: DoltConnectConfig,
     available: AtomicBool,
+    /// Где на этой машине лежат проекты обнаруженных баз — см.
+    /// [`LocalProjectIndex`].
+    local_projects: LocalProjectIndex,
 }
 
 impl DoltManager {
@@ -104,7 +109,16 @@ impl DoltManager {
             pool: Pool::new(opts),
             config,
             available: AtomicBool::new(false),
+            local_projects: LocalProjectIndex::new(),
         }
+    }
+
+    /// Индекс «имя базы -> папка проекта» этой машины, из кэша или свежий.
+    pub async fn local_project_index(
+        &self,
+        roots: Vec<PathBuf>,
+    ) -> Arc<HashMap<String, PathBuf>> {
+        self.local_projects.get(roots).await
     }
 
     /// Configured Dolt endpoint (`host:port`) for status messages.
@@ -1100,16 +1114,21 @@ fn declared_database_name(project_path: &Path) -> Option<String> {
         .map(|prefix| format!("beads_{}", prefix))
 }
 
-/// Один ли это каталог. На Windows регистр в путях не значим, на остальных
-/// системах — значим, и `Src` там законно отличается от `src`.
-fn same_dir(a: &Path, b: &Path) -> bool {
+/// Ключ каталога для сравнения путей между собой. На Windows регистр не
+/// значим, на остальных системах — значим, и `Src` там законно отличается от
+/// `src`.
+fn visit_key(dir: &Path) -> String {
+    let raw = dir.as_os_str().to_string_lossy().to_string();
     if cfg!(windows) {
-        a.as_os_str()
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&b.as_os_str().to_string_lossy())
+        raw.to_lowercase()
     } else {
-        a == b
+        raw
     }
+}
+
+/// Один ли это каталог — см. [`visit_key`] про регистр.
+fn same_dir(a: &Path, b: &Path) -> bool {
+    visit_key(a) == visit_key(b)
 }
 
 /// Корни, в которых имеет смысл искать репозитории на ЭТОЙ машине.
@@ -1148,6 +1167,75 @@ pub fn project_roots(known_project_paths: &[String]) -> Vec<PathBuf> {
     roots
 }
 
+/// Насколько долго индекс локальных проектов считается свежим.
+///
+/// Индекс строится обходом диска, а спрашивают его на каждое открытие главной —
+/// пересобирать его каждый раз незачем: репозитории не появляются чаще. Цена
+/// задержки мала и понятна: только что созданный `bd init` виден в дашборде на
+/// следующем опросе, а не мгновенно.
+const INDEX_TTL: Duration = Duration::from_secs(60);
+
+/// Кэш индекса локальных проектов.
+///
+/// Скан — синхронный обход файловой системы, поэтому он уезжает в blocking-пул:
+/// в async-хендлере он занял бы воркер целиком. Мьютекс держится через `await`
+/// намеренно — так параллельные запросы ждут один скан вместо того, чтобы
+/// запускать свой.
+pub struct LocalProjectIndex {
+    cached: tokio::sync::Mutex<Option<CachedIndex>>,
+}
+
+struct CachedIndex {
+    built_at: Instant,
+    /// Корни, по которым индекс построен: список меняется вместе с реестром, и
+    /// на других корнях прежний ответ уже не годится.
+    roots: Vec<PathBuf>,
+    entries: Arc<HashMap<String, PathBuf>>,
+}
+
+impl LocalProjectIndex {
+    pub fn new() -> Self {
+        Self {
+            cached: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// Индекс не старше [`INDEX_TTL`], построенный по этим корням.
+    pub async fn get(&self, roots: Vec<PathBuf>) -> Arc<HashMap<String, PathBuf>> {
+        let mut guard = self.cached.lock().await;
+
+        if let Some(cached) = guard.as_ref() {
+            if cached.roots == roots && cached.built_at.elapsed() < INDEX_TTL {
+                return Arc::clone(&cached.entries);
+            }
+        }
+
+        let scan_roots = roots.clone();
+        let entries = tokio::task::spawn_blocking(move || {
+            index_local_projects(&scan_roots, PROJECT_SCAN_DEPTH)
+        })
+        .await
+        .unwrap_or_else(|e| {
+            warn!("Local project scan failed: {e}");
+            HashMap::new()
+        });
+
+        let entries = Arc::new(entries);
+        *guard = Some(CachedIndex {
+            built_at: Instant::now(),
+            roots,
+            entries: Arc::clone(&entries),
+        });
+        entries
+    }
+}
+
+impl Default for LocalProjectIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Индекс «имя Dolt-базы -> каталог проекта на этой машине».
 ///
 /// Путь к репозиторию машинно-зависим, поэтому он нигде не хранится: ни в
@@ -1162,8 +1250,16 @@ pub fn index_local_projects(roots: &[PathBuf], max_depth: usize) -> HashMap<Stri
     // зависеть от того, как устроена очередь.
     let mut queue: VecDeque<(PathBuf, usize)> =
         roots.iter().map(|r| (r.clone(), 0usize)).collect();
+    // Корни пересекаются штатно: `~/GitHub` и `~/GitHub/MCP` оба приходят как
+    // родители заведённых проектов, и без этого вложенный каталог обходился бы
+    // дважды. При обходе в ширину корень успевает попасть сюда раньше, чем до
+    // него дойдёт родитель, так что приоритет корней не страдает.
+    let mut visited: HashSet<String> = HashSet::new();
 
     while let Some((dir, depth)) = queue.pop_front() {
+        if !visited.insert(visit_key(&dir)) {
+            continue;
+        }
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
@@ -1616,6 +1712,61 @@ mod tests {
             declared_database_name(&dir),
             Some("beads_myproj".to_string())
         );
+    }
+
+    #[test]
+    fn index_visits_an_overlapping_root_only_once() {
+        // `~/GitHub` и `~/GitHub/MCP` оба приходят как родители заведённых
+        // проектов. Вложенный корень не должен обходиться дважды, а проект
+        // внутри него — находиться по-прежнему.
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let nested = make_project(root, "MCP/umnico-mcp", "umnico");
+
+        let index = index_local_projects(
+            &[root.to_path_buf(), root.join("MCP")],
+            PROJECT_SCAN_DEPTH,
+        );
+
+        assert_eq!(index.get("umnico"), Some(&nested));
+        assert_eq!(index.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn cached_index_is_not_rebuilt_within_the_ttl() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().to_path_buf();
+        make_project(&root, "first", "one");
+
+        let cache = LocalProjectIndex::new();
+        let before = cache.get(vec![root.clone()]).await;
+        assert_eq!(before.len(), 1);
+
+        // Появившийся после сборки проект попадёт в индекс только со следующим
+        // сканом — ровно та задержка, которой оплачен отказ от скана на каждый
+        // запрос.
+        make_project(&root, "second", "two");
+        let after = cache.get(vec![root.clone()]).await;
+        assert_eq!(after.len(), 1);
+        assert!(Arc::ptr_eq(&before, &after));
+    }
+
+    #[tokio::test]
+    async fn cached_index_is_rebuilt_when_the_roots_change() {
+        let temp = tempfile::tempdir().unwrap();
+        let first_root = temp.path().join("a");
+        let second_root = temp.path().join("b");
+        make_project(&first_root, "repo", "one");
+        make_project(&second_root, "repo", "two");
+
+        let cache = LocalProjectIndex::new();
+        let first = cache.get(vec![first_root]).await;
+        assert!(first.contains_key("one"));
+
+        // Реестр изменился — прежний ответ построен не по тем корням.
+        let second = cache.get(vec![second_root]).await;
+        assert!(second.contains_key("two"));
+        assert!(!second.contains_key("one"));
     }
 
     #[test]

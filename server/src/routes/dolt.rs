@@ -72,8 +72,7 @@ pub async fn dolt_databases(
             // машине. Скан включается только когда есть кого искать.
             if databases.iter().any(|database| database.local_path.is_none()) {
                 let known: Vec<String> = projects.iter().map(|p| p.path.clone()).collect();
-                let index =
-                    dolt::index_local_projects(&dolt::project_roots(&known), dolt::PROJECT_SCAN_DEPTH);
+                let index = dolt.local_project_index(dolt::project_roots(&known)).await;
                 for database in &mut databases {
                     if database.local_path.is_none() {
                         database.local_path = index

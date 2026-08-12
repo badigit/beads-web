@@ -7,6 +7,7 @@ import {
   loadIgnoredDatabases,
   addIgnoredDatabases,
   projectRegistrationFor,
+  databaseNameForProject,
 } from "@/lib/dolt-autosync";
 
 const db = (name: string, projectName = name): DoltDatabase => ({
@@ -90,14 +91,75 @@ describe("projectRegistrationFor", () => {
   });
 });
 
+describe("databaseNameForProject", () => {
+  const databases = [
+    { name: "skyrem", project_name: "skycomm-reminders", local_path: "C:/Users/Dee/GitHub/skycomm-reminders" },
+    { name: "tvp", project_name: "trade-vp1", local_path: "C:/Users/Dee/GitHub/trade-vp1" },
+    { name: "BeadsBox_workspace", project_name: "BeadsBox_workspace" },
+  ];
+
+  it("reads the database straight off a dolt:// path", () => {
+    expect(
+      databaseNameForProject({ name: "whatever", path: "dolt://fmv" }, [])
+    ).toBe("fmv");
+  });
+
+  it("finds the database of a filesystem project by its folder", () => {
+    expect(
+      databaseNameForProject(
+        { name: "skycomm-reminders", path: "C:/Users/Dee/GitHub/skycomm-reminders" },
+        databases
+      )
+    ).toBe("skyrem");
+  });
+
+  it("ignores case and a trailing separator in the folder", () => {
+    expect(
+      databaseNameForProject(
+        { name: "trade-vp1", path: "c:/users/dee/github/trade-vp1/" },
+        databases
+      )
+    ).toBe("tvp");
+  });
+
+  it("falls back to the project name when no folder matches", () => {
+    expect(
+      databaseNameForProject(
+        { name: "BeadsBox_workspace", path: "C:/somewhere/else" },
+        databases
+      )
+    ).toBe("BeadsBox_workspace");
+  });
+
+  it("returns null when discovery knows nothing about the project", () => {
+    expect(
+      databaseNameForProject({ name: "unknown", path: "C:/nope" }, databases)
+    ).toBeNull();
+  });
+});
+
 describe("ignoredNamesForProject", () => {
   it("remembers both the project name and its database for dolt:// projects", () => {
-    expect(ignoredNamesForProject("fmv", "dolt://fmv")).toEqual(["fmv", "fmv"]);
     expect(ignoredNamesForProject("trade-vp1", "dolt://tvp")).toEqual(["trade-vp1", "tvp"]);
   });
 
-  it("remembers only the name for filesystem projects", () => {
+  it("does not repeat a name that equals its database", () => {
+    expect(ignoredNamesForProject("fmv", "dolt://fmv")).toEqual(["fmv"]);
+  });
+
+  it("remembers the resolved database of a filesystem project", () => {
+    // Ровно регресс bweb-1i0.4: автоподхваченный проект зовётся по папке,
+    // а следующий синк сверяется с именем базы.
+    expect(
+      ignoredNamesForProject("skycomm-reminders", "C:/Users/Dee/GitHub/skycomm-reminders", "skyrem")
+    ).toEqual(["skycomm-reminders", "skyrem"]);
+  });
+
+  it("remembers only the name when the database is unknown", () => {
     expect(ignoredNamesForProject("polygon", "C:/Users/Dee/GitHub/polygon")).toEqual(["polygon"]);
+    expect(ignoredNamesForProject("polygon", "C:/Users/Dee/GitHub/polygon", null)).toEqual([
+      "polygon",
+    ]);
   });
 });
 

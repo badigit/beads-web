@@ -64,10 +64,53 @@ export function projectRegistrationFor(database: DoltDatabase): {
   return { name: folderName(localPath) || database.project_name, path: localPath };
 }
 
-/** Names a removed project should be remembered under: its own and its database. */
-export function ignoredNamesForProject(name: string, path: string): string[] {
-  const database = path.startsWith("dolt://") ? path.slice("dolt://".length) : null;
-  return database ? [name, database] : [name];
+/**
+ * The Dolt database a project reads from, as far as discovery can tell.
+ *
+ * For a `dolt://` project the database is spelled out in the path. A filesystem
+ * project keeps that link inside its own `.beads/`, which the browser cannot
+ * read — but the server already resolved it while listing databases, so the
+ * answer is in that response: the entry whose folder or project name matches.
+ */
+export function databaseNameForProject(
+  project: { name: string; path: string },
+  databases: DoltDatabase[]
+): string | null {
+  if (project.path.startsWith("dolt://")) {
+    return project.path.slice("dolt://".length) || null;
+  }
+
+  const samePath = (a: string, b: string) =>
+    a.replace(/[/\\]+$/, "").toLowerCase() === b.replace(/[/\\]+$/, "").toLowerCase();
+
+  const byPath = databases.find(
+    (database) => database.local_path && samePath(database.local_path, project.path)
+  );
+  if (byPath) return byPath.name;
+
+  const byName = databases.find(
+    (database) => database.project_name.toLowerCase() === project.name.toLowerCase()
+  );
+  return byName?.name ?? null;
+}
+
+/**
+ * Names a removed project should be remembered under: its own and its database.
+ *
+ * Both are needed because the two sides of the comparison differ: the ignore
+ * list is checked against the project name AND the raw database name, and which
+ * one the next sync sees depends on whether the database still resolves to a
+ * folder. Remembering only the folder name let a removed project come straight
+ * back under the same name (bweb-1i0.4).
+ */
+export function ignoredNamesForProject(
+  name: string,
+  path: string,
+  databaseName?: string | null
+): string[] {
+  const fromPath = path.startsWith("dolt://") ? path.slice("dolt://".length) : null;
+  const database = databaseName ?? fromPath;
+  return database && database !== name ? [name, database] : [name];
 }
 
 export function loadIgnoredDatabases(): string[] {

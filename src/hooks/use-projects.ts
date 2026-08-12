@@ -14,6 +14,7 @@ import {
   loadIgnoredDatabases,
   addIgnoredDatabases,
   projectRegistrationFor,
+  databaseNameForProject,
 } from "@/lib/dolt-autosync";
 import type { Project, Tag, BeadCounts } from "@/types";
 
@@ -225,10 +226,23 @@ export function useProjects(): UseProjectsResult {
 
   const deleteProject = useCallback(async (id: string) => {
     // Remember the removal so the auto-sync below does not bring the database
-    // back on the next refresh.
+    // back on the next refresh. A filesystem project keeps the database name
+    // out of reach of the browser, so it is read back from discovery — without
+    // it the project returns under its folder name on the very next sync.
     const removed = projectsRef.current.find((project) => project.id === id);
     if (removed) {
-      addIgnoredDatabases(ignoredNamesForProject(removed.name, removed.path));
+      let databaseName: string | null = null;
+      try {
+        const { databases } = await api.dolt.databases();
+        databaseName = databaseNameForProject(removed, databases);
+      } catch (err) {
+        // Dolt unreachable means the auto-sync cannot resurrect anything
+        // either, so losing the database name here costs nothing.
+        console.error("Dolt: failed to resolve database before delete", err);
+      }
+      addIgnoredDatabases(
+        ignoredNamesForProject(removed.name, removed.path, databaseName)
+      );
     }
     await api.projects.delete(id);
     await fetchProjects();
