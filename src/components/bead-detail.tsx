@@ -230,14 +230,19 @@ export function BeadDetail({
             </h2>
 
             <p className="text-xs font-mono text-t-muted">
-              {ticketNumber !== undefined && (
-                <CopyableText copyText={`#${ticketNumber}`} className="font-semibold text-t-secondary">
-                  #{ticketNumber}
-                </CopyableText>
-              )}
-              {ticketNumber !== undefined && " "}
-              <CopyableText copyText={bead.id} className="inline-block max-w-[200px] truncate align-bottom">
-                {bead.id}
+              {/* Whole badge is one copy target for the bead id; the ticket
+                  number is shown but is not its own copy control (bweb-f6q). */}
+              <CopyableText
+                copyText={bead.id}
+                label={`Copy bead id ${bead.id}`}
+                className="inline-flex max-w-full items-baseline gap-1"
+              >
+                {ticketNumber !== undefined && (
+                  <span className="font-semibold text-t-secondary">#{ticketNumber}</span>
+                )}
+                <span className="inline-block max-w-[200px] truncate align-bottom">
+                  {bead.id}
+                </span>
               </CopyableText>
             </p>
 
