@@ -115,7 +115,7 @@ The more specific the memory, the more useful it is next time. No reusable insig
 
 Прод-деплой (Direct Dolt binary на `:3056`) крутится под **PM2** (стак
 `beads-web`, конфиг `pm2.config.cjs`), управляется из дашборда ai-tools. Общее
-правило флота — `~/.claude/rules/pm2-fleet.md`; здесь — контракт этого стака.
+правило флота — `~/.claude/rules/71-pm2-fleet.md`; здесь — контракт этого стака.
 
 **Прежде чем запускать/останавливать/убивать сервис — глянь живое состояние:**
 `pm2 jlist` (или `pm2 ls`).
