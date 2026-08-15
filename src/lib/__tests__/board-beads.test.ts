@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { selectBoardBeads } from "@/lib/board-beads";
+import { selectBoardBeads, selectListBeads } from "@/lib/board-beads";
 import type { Bead } from "@/types";
 
 /**
@@ -124,6 +124,48 @@ describe("selectBoardBeads", () => {
 
       expect(ids(result)).toEqual(["bweb-emj", "bweb-489"]);
     });
+  });
+});
+
+describe("selectListBeads", () => {
+  it("returns every bead at all depths, flat (no hierarchy collapse)", () => {
+    const result = selectListBeads(BEADS, "all");
+
+    expect(ids(result)).toEqual([
+      "bweb-489",
+      "bweb-489.12",
+      "bweb-489.12.1",
+      "bweb-489.12.2",
+      "bweb-emj",
+    ]);
+  });
+
+  it("keeps children flat even with no search active", () => {
+    const result = selectListBeads(BEADS, "all");
+
+    // The child and grandchild must survive — the list has no epic cards to
+    // nest them inside (unlike selectBoardBeads' hierarchy view).
+    expect(ids(result)).toContain("bweb-489.12");
+    expect(ids(result)).toContain("bweb-489.12.1");
+  });
+
+  it("honours the epics type filter at all depths", () => {
+    const result = selectListBeads(BEADS, "epics");
+
+    expect(ids(result)).toEqual(["bweb-489", "bweb-489.12"]);
+  });
+
+  it("honours the tasks type filter at all depths", () => {
+    const result = selectListBeads(BEADS, "tasks");
+
+    expect(ids(result)).toEqual(["bweb-489.12.1", "bweb-489.12.2", "bweb-emj"]);
+  });
+
+  it("preserves the incoming sort order", () => {
+    const reversed = [...BEADS].toReversed();
+    const result = selectListBeads(reversed, "all");
+
+    expect(ids(result)).toEqual(ids(reversed));
   });
 });
 

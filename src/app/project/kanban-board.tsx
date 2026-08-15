@@ -4,11 +4,12 @@ import { useMemo, useRef, useState, useCallback, useEffect } from "react";
 
 import { useSearchParams, useRouter } from "next/navigation";
 
-import { ArrowLeft, EllipsisVertical } from "lucide-react";
+import { ArrowLeft, EllipsisVertical, LayoutGrid, List } from "lucide-react";
 
 import { ActivityTimeline } from "@/components/activity-timeline";
 import { AgentsPanel } from "@/components/agents-panel";
 import { BeadDetail } from "@/components/bead-detail";
+import { BoardList } from "@/components/board-list";
 import { CommentList } from "@/components/comment-list";
 import { CreateBeadDialog } from "@/components/create-bead-dialog";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -30,6 +31,7 @@ import { useBeadDetail } from "@/hooks/use-bead-detail";
 import { useBeadFilters } from "@/hooks/use-bead-filters";
 import { useBeadUrlSync } from "@/hooks/use-bead-url-sync";
 import { useBeads } from "@/hooks/use-beads";
+import { useBoardView, type BoardView } from "@/hooks/use-board-view";
 import { useGitHubStatus } from "@/hooks/use-github-status";
 import { useKeyboardNavigation } from "@/hooks/use-keyboard-navigation";
 import { usePRSettings } from "@/hooks/use-pr-settings";
@@ -38,7 +40,7 @@ import { useTheme } from "@/hooks/use-theme";
 import { useWorktreeStatuses } from "@/hooks/use-worktree-statuses";
 import { isBlocked } from "@/lib/bead-utils";
 import { getUnknownStatusBeads, getUnknownStatusNames } from "@/lib/beads-parser";
-import { isFlatSearchMode, selectBoardBeads, type IssueTypeFilter } from "@/lib/board-beads";
+import { isFlatSearchMode, selectBoardBeads, selectListBeads, type IssueTypeFilter } from "@/lib/board-beads";
 import { isDoltProject } from "@/lib/utils";
 import type { Bead, BeadStatus } from "@/types";
 
@@ -52,6 +54,49 @@ const COLUMNS: { status: BeadStatus; title: string }[] = [
   { status: "inreview", title: "In Review" },
   { status: "closed", title: "Closed" },
 ];
+
+/**
+ * Kanban / list view toggle for the board header.
+ *
+ * Mirrors the home page's LayoutGrid/List toggle group (`src/app/page.tsx`):
+ * a `role="group"` of two icon buttons with `aria-pressed` state.
+ */
+function BoardViewToggle({
+  view,
+  onChange,
+}: {
+  view: BoardView;
+  onChange: (view: BoardView) => void;
+}) {
+  return (
+    <div
+      className="flex items-center gap-0.5 rounded-md border border-b-strong bg-surface-raised/50 p-0.5"
+      role="group"
+      aria-label="Board view"
+    >
+      <Button
+        variant={view === "kanban" ? "mono" : "ghost"}
+        size="sm"
+        mode="icon"
+        aria-label="Kanban view"
+        aria-pressed={view === "kanban"}
+        onClick={() => onChange("kanban")}
+      >
+        <LayoutGrid className="h-4 w-4" aria-hidden="true" />
+      </Button>
+      <Button
+        variant={view === "list" ? "mono" : "ghost"}
+        size="sm"
+        mode="icon"
+        aria-label="List view"
+        aria-pressed={view === "list"}
+        onClick={() => onChange("list")}
+      >
+        <List className="h-4 w-4" aria-hidden="true" />
+      </Button>
+    </div>
+  );
+}
 
 /**
  * Main Kanban board component with 4 columns, search, filter, and keyboard navigation
@@ -92,6 +137,9 @@ export default function KanbanBoard() {
 
   // Issue type filter state (epics vs tasks)
   const [typeFilter, setTypeFilter] = useState<IssueTypeFilter>("all");
+
+  // Board view mode (kanban columns vs dense flat list), persisted in localStorage.
+  const { view: boardView, setView: setBoardView } = useBoardView();
 
   // Dolt project detection and filesystem path resolution
   const isDolt = isDoltProject(project?.path);
@@ -177,6 +225,16 @@ export default function KanbanBoard() {
   const topLevelBeads = useMemo(
     () => selectBoardBeads(filteredBeads, typeFilter, debouncedSearch),
     [filteredBeads, typeFilter, debouncedSearch]
+  );
+
+  /**
+   * Beads for the flat list view: every filtered bead at all depths, with the
+   * epics/tasks type filter applied. Unlike the kanban slice this never
+   * collapses the hierarchy — the list has no epic cards to nest children in.
+   */
+  const listBeads = useMemo(
+    () => selectListBeads(filteredBeads, typeFilter),
+    [filteredBeads, typeFilter]
   );
 
   /**
@@ -300,10 +358,13 @@ export default function KanbanBoard() {
             <a href="/" className="hover:opacity-80">&gt;</a>{' '}
             <span className="uppercase">{project.name}_</span>
           </h1>
-          <span className="font-mono text-xs text-t-muted uppercase tracking-widest">
-            {beads.length} beads // {beads.filter(b => b.issue_type === 'epic').length} epics // {beads.filter(b => isBlocked(b, beads)).length} blocked
-            {beadsRevalidating && ' // syncing'}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-xs text-t-muted uppercase tracking-widest">
+              {beads.length} beads // {beads.filter(b => b.issue_type === 'epic').length} epics // {beads.filter(b => isBlocked(b, beads)).length} blocked
+              {beadsRevalidating && ' // syncing'}
+            </span>
+            <BoardViewToggle view={boardView} onChange={setBoardView} />
+          </div>
         </div>
       ) : (
         <div className="flex items-center gap-2 px-4 py-2">
@@ -331,6 +392,9 @@ export default function KanbanBoard() {
               Updating…
             </span>
           )}
+          <div className="ml-auto">
+            <BoardViewToggle view={boardView} onChange={setBoardView} />
+          </div>
         </div>
       )}
 
@@ -376,7 +440,7 @@ export default function KanbanBoard() {
         />
       </div>
 
-      {/* Kanban Columns */}
+      {/* Board — kanban columns or dense flat list */}
       <main className="flex-1 overflow-hidden p-4">
         {beadsLoading ? (
           <div className="flex items-center justify-center h-full">
@@ -386,6 +450,14 @@ export default function KanbanBoard() {
           <div className="flex items-center justify-center h-full">
             <div role="alert" className="text-danger">Error loading beads: {beadsError.message}</div>
           </div>
+        ) : boardView === "list" ? (
+          <BoardList
+            beads={listBeads}
+            allBeads={beads}
+            selectedBeadId={selectedId}
+            ticketNumbers={ticketNumbers}
+            onSelectBead={openBead}
+          />
         ) : (
           <div className="grid grid-cols-4 h-full" style={{ gap: 'var(--column-gap)' }}>
             {COLUMNS.map(({ status, title }) => (
