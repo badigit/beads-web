@@ -8,14 +8,7 @@ import {
   createProject,
   type CreateProjectInput,
 } from "@/lib/db";
-import {
-  findUnlistedDatabases,
-  ignoredNamesForProject,
-  loadIgnoredDatabases,
-  addIgnoredDatabases,
-  projectRegistrationFor,
-  databaseNameForProject,
-} from "@/lib/dolt-autosync";
+import { takeIgnoredDatabases } from "@/lib/dolt-autosync";
 import type { Project, Tag, BeadCounts } from "@/types";
 
 interface UseProjectsResult {
@@ -44,12 +37,10 @@ export function useProjects(): UseProjectsResult {
   const loadingRef = useRef(0);
   const beadsAbortRef = useRef<AbortController | null>(null);
   const showArchivedRef = useRef(false);
-  const projectsRef = useRef<Project[]>([]);
   const syncedRef = useRef(false);
 
-  // Keep refs in sync with state
+  // Keep ref in sync with state
   useEffect(() => { showArchivedRef.current = showArchived; }, [showArchived]);
-  useEffect(() => { projectsRef.current = projects; }, [projects]);
 
   const fetchProjects = useCallback(async () => {
     const loadId = ++loadingRef.current;
@@ -225,67 +216,31 @@ export function useProjects(): UseProjectsResult {
   }, [fetchProjects]);
 
   const deleteProject = useCallback(async (id: string) => {
-    // Remember the removal so the auto-sync below does not bring the database
-    // back on the next refresh. A filesystem project keeps the database name
-    // out of reach of the browser, so it is read back from discovery — without
-    // it the project returns under its folder name on the very next sync.
-    const removed = projectsRef.current.find((project) => project.id === id);
-    if (removed) {
-      let databaseName: string | null = null;
-      try {
-        const { databases } = await api.dolt.databases();
-        databaseName = databaseNameForProject(removed, databases);
-      } catch (err) {
-        // Dolt unreachable means the auto-sync cannot resurrect anything
-        // either, so losing the database name here costs nothing.
-        console.error("Dolt: failed to resolve database before delete", err);
-      }
-      addIgnoredDatabases(
-        ignoredNamesForProject(removed.name, removed.path, databaseName)
-      );
-    }
+    // Имя базы для игнор-списка сервер определяет сам: связь «проект -> база»
+    // читается из его `.beads/`, куда браузеру доступа нет.
     await api.projects.delete(id);
     await fetchProjects();
   }, [fetchProjects]);
 
   /**
-   * Register Dolt databases that have no project yet.
+   * Просит сервер завести проекты для баз, которых нет в реестре.
    *
-   * A database created straight on the central server (`bd init`) is invisible
-   * in the dashboard until it lands in the local registry — this closes that
-   * gap without the user going through Add Project. The server resolves each
-   * database to its project folder when that folder exists on this machine, so
-   * the registration is a full filesystem project rather than a read-only
-   * `dolt://` entry (see `projectRegistrationFor`).
+   * Сама сверка живёт на сервере и идёт по таймеру — здесь только явный повод
+   * не ждать следующего прохода: открытая страница и кнопка обновления.
    */
   const syncDoltDatabases = useCallback(async (): Promise<number> => {
-    let unlisted: Awaited<ReturnType<typeof api.dolt.databases>>["databases"] = [];
     try {
-      const [{ databases }, existing] = await Promise.all([
-        api.dolt.databases(),
-        getProjectsWithTags(true),
-      ]);
-      unlisted = findUnlistedDatabases(
-        databases,
-        existing.map((project) => project.name),
-        loadIgnoredDatabases()
-      );
+      // Разовый перенос списка удалённых баз из прежней клиентской версии.
+      const ignored = takeIgnoredDatabases();
+      if (ignored.length > 0) await api.dolt.ignore(ignored);
+
+      const { added } = await api.dolt.syncProjects();
+      return added.length;
     } catch (err) {
-      // Dolt being unreachable must not take the project list down with it.
-      console.error("Dolt auto-sync: failed to list databases", err);
+      // Недоступный Dolt не должен ронять список проектов.
+      console.error("Dolt auto-sync: server sync failed", err);
       return 0;
     }
-
-    let added = 0;
-    for (const database of unlisted) {
-      try {
-        await createProject(projectRegistrationFor(database));
-        added++;
-      } catch (err) {
-        console.error(`Dolt auto-sync: failed to add "${database.name}"`, err);
-      }
-    }
-    return added;
   }, []);
 
   const refresh = useCallback(async () => {

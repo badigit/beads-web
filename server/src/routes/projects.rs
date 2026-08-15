@@ -14,6 +14,7 @@ use crate::db::{
     CachedCounts, CreateProjectInput, CreateTagInput, Database, DbError, ProjectTagInput,
     ProjectWithTags, Tag, UpdateProjectInput,
 };
+use crate::project_sync;
 
 /// Application state containing the database
 pub type AppState = Arc<Database>;
@@ -112,7 +113,12 @@ pub async fn create_project(
     State(db): State<AppState>,
     Json(input): Json<CreateProjectInput>,
 ) -> Result<(StatusCode, Json<ProjectWithTags>), (StatusCode, Json<ErrorResponse>)> {
+    // Заведение проекта руками отменяет прошлое удаление — иначе автосинк
+    // считал бы базу навсегда отвергнутой.
     let project = db.create_project(input).map_err(db_error_response)?;
+    if let Err(e) = db.unignore_databases(&project_sync::ignored_names_for_project(&project)) {
+        tracing::warn!("Failed to clear ignore entry for {}: {e}", project.name);
+    }
 
     // Return project with empty tags array
     let project_with_tags = ProjectWithTags {
@@ -155,6 +161,16 @@ pub async fn delete_project(
     State(db): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    // Запоминаем удаление до самого удаления: иначе имя базы уже не узнать, а
+    // без него автосинк заведёт проект заново на ближайшем проходе.
+    if let Ok(projects) = db.get_projects_filtered(true) {
+        if let Some(project) = projects.iter().find(|project| project.id == id) {
+            if let Err(e) = db.ignore_databases(&project_sync::ignored_names_for_project(project)) {
+                tracing::warn!("Failed to remember removed project {}: {e}", project.name);
+            }
+        }
+    }
+
     db.delete_project(&id).map_err(db_error_response)?;
     Ok(StatusCode::NO_CONTENT)
 }

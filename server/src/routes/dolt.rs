@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crate::db::Database;
 use crate::dolt::{self, DoltManager};
+use crate::project_sync;
 
 use super::beads::resolve_dolt_port;
 
@@ -44,50 +45,54 @@ pub async fn dolt_databases(
         }));
     }
 
-    match dolt.discover_databases().await {
-        Ok(mut databases) => {
-            let projects = db.get_projects_filtered(true).unwrap_or_default();
-            for database in &mut databases {
-                if let Some(project) = projects.iter().find(|project| {
-                    let configured_database = if let Some(name) = project.path.strip_prefix("dolt://") {
-                        Some(name.to_string())
-                    } else {
-                        dolt::database_name_for_project(std::path::Path::new(&project.path))
-                    };
-                    configured_database.as_deref() == Some(database.name.as_str())
-                }) {
-                    database.project_name = project.name.clone();
-                    database.local_path = if project.path.starts_with("dolt://") {
-                        project.local_path.clone()
-                    } else {
-                        Some(project.path.clone())
-                    };
-                }
-            }
-
-            // База, которой нет в реестре, приходит без пути: связь «база ->
-            // папка» живёт только внутри репозитория, в его `.beads/`. Ищем её
-            // на диске, иначе автоподхват заведёт проект как `dolt://` — без
-            // Memory, Agents и bd CLI, и привязывать придётся руками на каждой
-            // машине. Скан включается только когда есть кого искать.
-            if databases.iter().any(|database| database.local_path.is_none()) {
-                let known: Vec<String> = projects.iter().map(|p| p.path.clone()).collect();
-                let index = dolt.local_project_index(dolt::project_roots(&known)).await;
-                for database in &mut databases {
-                    if database.local_path.is_none() {
-                        database.local_path = index
-                            .get(&database.name)
-                            .map(|dir| dir.to_string_lossy().replace('\\', "/"));
-                    }
-                }
-            }
-
-            Json(serde_json::json!({ "databases": databases }))
-        }
+    match project_sync::enriched_databases(&db, &dolt).await {
+        Ok(databases) => Json(serde_json::json!({ "databases": databases })),
         Err(e) => Json(serde_json::json!({
             "error": e.to_string(),
             "databases": [],
         })),
+    }
+}
+
+/// POST /api/dolt/sync-projects
+///
+/// Заводит проекты для баз центрального сервера, которых ещё нет в реестре.
+/// Тот же проход, что и при старте, — на него нажимает кнопка обновления.
+pub async fn sync_projects(
+    Extension(dolt): Extension<Arc<DoltManager>>,
+    Extension(db): Extension<Arc<Database>>,
+) -> impl IntoResponse {
+    let report = project_sync::sync_projects(db, dolt).await;
+    Json(serde_json::json!({
+        "added": report.added,
+        "unavailable": report.unavailable,
+    }))
+}
+
+/// Тело `POST /api/dolt/ignored`.
+#[derive(Debug, serde::Deserialize)]
+pub struct IgnoreDatabasesInput {
+    pub names: Vec<String>,
+}
+
+/// POST /api/dolt/ignored
+///
+/// Помечает имена как удалённые пользователем, чтобы автосинк их не заводил.
+/// Нужен, чтобы перенести на сервер список, накопленный прежней клиентской
+/// версией автосинка в localStorage.
+pub async fn ignore_databases(
+    Extension(db): Extension<Arc<Database>>,
+    Json(input): Json<IgnoreDatabasesInput>,
+) -> impl IntoResponse {
+    match db.ignore_databases(&input.names) {
+        Ok(()) => (
+            axum::http::StatusCode::OK,
+            Json(serde_json::json!({ "ignored": input.names.len() })),
+        ),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
     }
 }
 

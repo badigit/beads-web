@@ -478,6 +478,20 @@ export const dolt = {
   status: () => fetchApi<DoltStatus>('/api/dolt/status'),
   databases: () => fetchApi<{ databases: DoltDatabase[] }>('/api/dolt/databases'),
   servers: () => fetchApi<{ servers: DoltServer[] }>('/api/dolt/servers'),
+  /** Registers databases that have no project yet; returns the names added. */
+  syncProjects: () =>
+    // Дольше общего таймаута: за сверкой может пойти скан диска, который ищет
+    // папку для базы, ещё не попавшей в реестр.
+    fetchApi<{ added: string[]; unavailable: boolean }>('/api/dolt/sync-projects', {
+      method: 'POST',
+      signal: AbortSignal.timeout(60000),
+    }),
+  /** Marks names as user-removed so the sync leaves them alone. */
+  ignore: (names: string[]) =>
+    fetchApi<{ ignored: number }>('/api/dolt/ignored', {
+      method: 'POST',
+      body: JSON.stringify({ names }),
+    }),
 };
 
 /**

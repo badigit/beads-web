@@ -8,6 +8,7 @@ mod db;
 mod doctor;
 mod dolt;
 mod process;
+mod project_sync;
 mod routes;
 
 use axum::{
@@ -20,9 +21,16 @@ use axum::{
 };
 use rust_embed::Embed;
 use std::sync::Arc;
+use std::time::Duration;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
+
+/// Как часто сервер сверяет список баз центрального Dolt с реестром проектов.
+///
+/// Сверка дешёвая (`SHOW DATABASES`), скан диска за ней включается только при
+/// нерезолвленных базах и держит собственный кэш.
+const PROJECT_SYNC_INTERVAL: Duration = Duration::from_secs(300);
 
 /// Embedded static files from the Next.js build output.
 ///
@@ -171,6 +179,12 @@ async fn main() {
     let dolt_watch_registry = routes::dolt_watch::new_registry();
 
     // Build the router
+    // Реестр проектов пополняется на сервере, а не в браузере: база, заведённая
+    // через `bd init`, должна появиться в списке и тогда, когда вкладку никто не
+    // открывал. Первый проход идёт сразу после старта, дальше — по таймеру.
+    let sync_db = Arc::clone(&database);
+    let sync_dolt = Arc::clone(&dolt_manager);
+
     let app = Router::new()
         .route("/api/health", get(routes::health))
         .nest("/api", routes::project_routes().with_state(database.clone()))
@@ -184,6 +198,11 @@ async fn main() {
         .route("/api/dolt/status", get(routes::dolt::dolt_status))
         .route("/api/dolt/databases", get(routes::dolt::dolt_databases))
         .route("/api/dolt/servers", get(routes::dolt::dolt_servers))
+        .route(
+            "/api/dolt/sync-projects",
+            post(routes::dolt::sync_projects),
+        )
+        .route("/api/dolt/ignored", post(routes::dolt::ignore_databases))
         .route("/api/dolt/watch", get(routes::dolt_watch::watch_dolt))
         .route("/api/fs/list", get(routes::fs::list_directory))
         .route("/api/fs/exists", get(routes::fs::path_exists))
@@ -247,6 +266,21 @@ async fn main() {
             tracing::warn!("Failed to open browser: {}", e);
         }
     }
+
+    tokio::spawn(async move {
+        loop {
+            let report =
+                project_sync::sync_projects(Arc::clone(&sync_db), Arc::clone(&sync_dolt)).await;
+            if !report.added.is_empty() {
+                info!(
+                    "Project sync: added {} project(s): {}",
+                    report.added.len(),
+                    report.added.join(", ")
+                );
+            }
+            tokio::time::sleep(PROJECT_SYNC_INTERVAL).await;
+        }
+    });
 
     // Start the server
     axum::serve(listener, app)

@@ -241,6 +241,13 @@ impl Database {
                     updated_at TEXT NOT NULL
                 )",
             ),
+            (
+                4,
+                "CREATE TABLE IF NOT EXISTS ignored_databases (
+                    db_name TEXT PRIMARY KEY,
+                    ignored_at TEXT NOT NULL
+                )",
+            ),
         ];
 
         let now = Utc::now().to_rfc3339();
@@ -404,6 +411,47 @@ impl Database {
             return Err(DbError::ProjectNotFound(id.to_string()));
         }
 
+        Ok(())
+    }
+
+    // ===== Ignored databases =====
+
+    /// Имена, которые автосинк не должен заводить заново.
+    ///
+    /// Список наполняется при удалении проекта: без него база, стёртая из
+    /// реестра руками, возвращается на следующем же скане сервера.
+    pub fn ignored_databases(&self) -> Result<Vec<String>, DbError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT db_name FROM ignored_databases")?;
+        let names = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<SqliteResult<Vec<String>>>()?;
+        Ok(names)
+    }
+
+    /// Запоминает имена как удалённые. Повторная запись — не ошибка.
+    pub fn ignore_databases(&self, names: &[String]) -> Result<(), DbError> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        for name in names {
+            conn.execute(
+                "INSERT INTO ignored_databases (db_name, ignored_at) VALUES (?1, ?2)
+                 ON CONFLICT(db_name) DO UPDATE SET ignored_at = ?2",
+                params![name, now],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Снимает игнор: проект, заведённый вручную, отменяет прошлое удаление.
+    pub fn unignore_databases(&self, names: &[String]) -> Result<(), DbError> {
+        let conn = self.conn.lock().unwrap();
+        for name in names {
+            conn.execute(
+                "DELETE FROM ignored_databases WHERE db_name = ?1 COLLATE NOCASE",
+                params![name],
+            )?;
+        }
         Ok(())
     }
 
@@ -674,6 +722,31 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ignored_databases_start_empty_and_accumulate() {
+        let db = Database::new_in_memory().unwrap();
+        assert!(db.ignored_databases().unwrap().is_empty());
+
+        db.ignore_databases(&["sbc".to_string(), "mcpproxy".to_string()])
+            .unwrap();
+        // Повторное удаление того же проекта не должно падать на PRIMARY KEY.
+        db.ignore_databases(&["sbc".to_string()]).unwrap();
+
+        let mut names = db.ignored_databases().unwrap();
+        names.sort();
+        assert_eq!(names, vec!["mcpproxy".to_string(), "sbc".to_string()]);
+    }
+
+    #[test]
+    fn unignore_removes_regardless_of_case() {
+        let db = Database::new_in_memory().unwrap();
+        db.ignore_databases(&["Skyrem".to_string()]).unwrap();
+
+        db.unignore_databases(&["skyrem".to_string()]).unwrap();
+
+        assert!(db.ignored_databases().unwrap().is_empty());
+    }
 
     #[test]
     fn test_create_and_get_project() {
