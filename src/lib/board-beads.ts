@@ -59,3 +59,22 @@ export function selectBoardBeads(
 
   return applyTypeFilter(candidates, typeFilter);
 }
+
+/**
+ * Pick the beads that get their own row in the flat list view.
+ *
+ * Unlike {@link selectBoardBeads}, the list is **always** flat: every bead —
+ * top-level, child and grandchild alike — becomes its own row regardless of
+ * search state, since the list has no epic cards to nest children inside.
+ * Only the epics/tasks type filter narrows the set; the incoming filter and
+ * sort order (from `useBeadFilters`) are preserved.
+ *
+ * @param filteredBeads - beads already passed through `useBeadFilters`
+ * @param typeFilter - epics/tasks/all toggle
+ */
+export function selectListBeads(
+  filteredBeads: Bead[],
+  typeFilter: IssueTypeFilter
+): Bead[] {
+  return applyTypeFilter(filteredBeads, typeFilter);
+}
