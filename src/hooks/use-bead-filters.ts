@@ -10,7 +10,7 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 
 import { isDeferred } from "@/lib/bead-utils";
-import type { Bead, BeadStatus } from "@/types";
+import type { Bead, BeadStatus, LabelCount } from "@/types";
 
 /**
  * Sort field options
@@ -34,6 +34,16 @@ export interface BeadFilters {
   priorities: number[];
   /** Owner/agent filter - empty array means all owners */
   owners: string[];
+  /**
+   * Label filter, OR semantics: a bead passes when it carries at least one of
+   * these labels. Empty array means every bead passes.
+   */
+  labels: string[];
+  /**
+   * Labels that hide a bead: it fails as soon as it carries any of them.
+   * Applied after `labels`, so "everything tagged X except Y" is expressible.
+   */
+  excludeLabels: string[];
   /** Sort field */
   sortField: SortField;
   /** Sort direction */
@@ -66,6 +76,12 @@ export interface UseBeadFiltersResult {
   activeFilterCount: number;
   /** Unique owners extracted from beads */
   availableOwners: string[];
+  /**
+   * Labels actually present on the loaded beads, with counts, most used first.
+   * A local fallback for the vocabulary the backend aggregates from the whole
+   * database — the menu still offers something when that request fails.
+   */
+  availableLabels: LabelCount[];
   /** Debounced search value (for display) */
   debouncedSearch: string;
 }
@@ -78,6 +94,8 @@ const DEFAULT_FILTERS: BeadFilters = {
   statuses: [],
   priorities: [],
   owners: [],
+  labels: [],
+  excludeLabels: [],
   sortField: "created_at",
   sortDirection: "desc",
   todayOnly: false,
@@ -180,6 +198,24 @@ export function useBeadFilters(
   }, [beads]);
 
   /**
+   * Extract the labels present on the loaded beads, with per-label counts.
+   * Ordered like the backend's vocabulary: most used first, ties by name.
+   */
+  const availableLabels = useMemo(() => {
+    const counts = new Map<string, number>();
+    beads.forEach((bead) => {
+      (bead.labels ?? []).forEach((raw) => {
+        const label = raw.trim();
+        if (!label) return;
+        counts.set(label, (counts.get(label) ?? 0) + 1);
+      });
+    });
+    return Array.from(counts, ([label, count]) => ({ label, count })).sort(
+      (a, b) => b.count - a.count || a.label.localeCompare(b.label)
+    );
+  }, [beads]);
+
+  /**
    * Apply all filters to beads and sort
    */
   const filteredBeads = useMemo(() => {
@@ -214,6 +250,20 @@ export function useBeadFilters(
       // Owner filter
       if (filters.owners.length > 0) {
         if (!filters.owners.includes(bead.owner)) return false;
+      }
+
+      // Label filters: include is OR (any match passes), exclude wins over it.
+      if (filters.labels.length > 0 || filters.excludeLabels.length > 0) {
+        const beadLabels = bead.labels ?? [];
+        if (
+          filters.labels.length > 0 &&
+          !filters.labels.some((label) => beadLabels.includes(label))
+        ) {
+          return false;
+        }
+        if (filters.excludeLabels.some((label) => beadLabels.includes(label))) {
+          return false;
+        }
       }
 
       // Deferred filter — `deferred` is mapped onto the open column, so the
@@ -256,6 +306,8 @@ export function useBeadFilters(
       filters.statuses.length > 0 ||
       filters.priorities.length > 0 ||
       filters.owners.length > 0 ||
+      filters.labels.length > 0 ||
+      filters.excludeLabels.length > 0 ||
       filters.todayOnly ||
       filters.hideDeferred ||
       filters.sortField !== DEFAULT_FILTERS.sortField ||
@@ -271,6 +323,7 @@ export function useBeadFilters(
     if (filters.statuses.length > 0) count++;
     if (filters.priorities.length > 0) count++;
     if (filters.owners.length > 0) count++;
+    if (filters.labels.length > 0 || filters.excludeLabels.length > 0) count++;
     if (filters.todayOnly) count++;
     if (filters.hideDeferred) count++;
     return count;
@@ -284,6 +337,7 @@ export function useBeadFilters(
     hasActiveFilters,
     activeFilterCount,
     availableOwners,
+    availableLabels,
     debouncedSearch,
   };
 }

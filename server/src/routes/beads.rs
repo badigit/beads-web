@@ -198,6 +198,14 @@ pub struct Bead {
     pub deps: Option<Vec<String>>,
     #[serde(default, alias = "related")]
     pub relates_to: Option<Vec<String>>,
+    /// Labels attached to the bead.
+    ///
+    /// In Dolt they live in a flat `(issue_id, label)` link table with no
+    /// dictionary table alongside it, so the set of a project's labels is
+    /// exactly `SELECT DISTINCT label`. `bd list --json` already emits the
+    /// same `labels` field, so the CLI and JSONL tiers fill it in for free.
+    #[serde(default)]
+    pub labels: Option<Vec<String>>,
     /// Raw dependencies field — accepts arrays of objects (legacy or bd 1.1.0) and arrays of string IDs.
     #[serde(default, skip_serializing, deserialize_with = "deserialize_dependencies")]
     pub(crate) dependencies: Option<RawDependencies>,
@@ -407,6 +415,61 @@ fn counts_from_beads(beads: &[Bead]) -> BeadCounts {
         counts.add(&bead.status, 1);
     }
     counts
+}
+
+/// One label of a project's vocabulary together with how many beads carry it.
+///
+/// Beads keeps no dictionary table beside the flat `(issue_id, label)` link
+/// table, so a project's vocabulary is whatever the data says it is. The count
+/// travels with the name so rare labels stay visible in the filter menu
+/// instead of drowning among the frequent ones.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LabelCount {
+    pub label: String,
+    pub count: i64,
+}
+
+/// Orders a vocabulary: most used first, ties broken alphabetically.
+///
+/// Applied to every tier — SQL aggregate and in-memory fold alike — so the
+/// filter menu does not reshuffle when the data source changes.
+fn sort_label_counts(labels: &mut [LabelCount]) {
+    labels.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.label.cmp(&b.label)));
+}
+
+/// Folds `(label, count)` aggregate rows — as produced by
+/// `SELECT label, COUNT(*) … GROUP BY label` — into the sorted vocabulary.
+/// Blank labels are dropped: they are unselectable noise in a filter menu.
+fn label_counts_from_rows<S: AsRef<str>>(rows: &[(S, i64)]) -> Vec<LabelCount> {
+    let mut labels: Vec<LabelCount> = rows
+        .iter()
+        .filter_map(|(label, count)| {
+            let label = label.as_ref().trim();
+            (!label.is_empty()).then(|| LabelCount {
+                label: label.to_string(),
+                count: *count,
+            })
+        })
+        .collect();
+    sort_label_counts(&mut labels);
+    labels
+}
+
+/// Folds a materialized bead list into the same vocabulary. Used by the tiers
+/// with no cheap aggregate (bd CLI, JSONL), which carry labels on the beads.
+fn labels_from_beads(beads: &[Bead]) -> Vec<LabelCount> {
+    let mut counts: HashMap<&str, i64> = HashMap::new();
+    for bead in beads {
+        for label in bead.labels.iter().flatten() {
+            let label = label.trim();
+            if label.is_empty() {
+                continue;
+            }
+            *counts.entry(label).or_insert(0) += 1;
+        }
+    }
+    let rows: Vec<(&str, i64)> = counts.into_iter().collect();
+    label_counts_from_rows(&rows)
 }
 
 /// Upserts bead counts into the local SQLite cache so the home page can render
@@ -879,6 +942,88 @@ async fn resolve_bead_counts(
     let BeadsRead { beads, source } =
         read_beads_cascade(dolt_manager, path, &project_path, None).await?;
     Ok((counts_from_beads(&beads), source))
+}
+
+/// GET /api/beads/labels?path=/path/to/project
+/// GET /api/beads/labels?path=dolt://beads_dbname
+///
+/// Returns the project's label vocabulary with per-label bead counts, so the
+/// board can offer a filter over the labels that actually exist rather than a
+/// free-text field that silently invents `night_ok` next to `night-ok`.
+pub async fn read_bead_labels(
+    Extension(dolt_manager): Extension<Arc<DoltManager>>,
+    Query(params): Query<BeadsParams>,
+) -> impl IntoResponse {
+    let path = params.path.replace('\\', "/");
+
+    match resolve_bead_labels(&dolt_manager, &path).await {
+        Ok((labels, source)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "labels": labels, "source": source })),
+        ),
+        Err((status, body)) => {
+            tracing::warn!(
+                path = %path,
+                status = status.as_u16(),
+                "Failed to resolve bead labels: {:?}",
+                body.0.get("error")
+            );
+            (status, body)
+        }
+    }
+}
+
+/// Resolves the label vocabulary for a project, preferring source-side
+/// aggregation. Mirrors [`resolve_bead_counts`] tier for tier: `dolt://`
+/// direct → per-project Dolt → central Dolt → full cascade folded in memory.
+async fn resolve_bead_labels(
+    dolt_manager: &DoltManager,
+    path: &str,
+) -> Result<(Vec<LabelCount>, &'static str), RouteError> {
+    if let Some(db_name) = path.strip_prefix(DOLT_PATH_PREFIX) {
+        ensure_dolt_online(dolt_manager).await?;
+        return match dolt_manager.count_labels(db_name).await {
+            Ok(rows) => Ok((label_counts_from_rows(&rows), "dolt-direct")),
+            Err(e) => Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                e.to_string(),
+            )),
+        };
+    }
+
+    let project_path = PathBuf::from(path);
+    let beads_dir = resolve_beads_dir(&project_path)?;
+
+    // Tier 0 aggregate: per-project Dolt server.
+    if let Some((port, db_name)) = resolve_project_dolt(&beads_dir, &project_path).await {
+        match dolt::count_labels_on_port(port, &db_name).await {
+            Ok(rows) => return Ok((label_counts_from_rows(&rows), "dolt-project")),
+            Err(e) => tracing::warn!(
+                "Per-project Dolt label aggregate on port {} failed: {}, falling back",
+                port,
+                e
+            ),
+        }
+    }
+
+    // Tier 1 aggregate: central Dolt SQL server.
+    if dolt_manager.is_available() {
+        if let Some(db_name) = dolt::database_name_for_project(&project_path) {
+            match dolt_manager.count_labels(&db_name).await {
+                Ok(rows) => return Ok((label_counts_from_rows(&rows), "dolt-central")),
+                Err(e) => tracing::info!(
+                    "Dolt label aggregate failed for {} ({}), falling back to full read",
+                    db_name,
+                    e
+                ),
+            }
+        }
+    }
+
+    // Fallback: bd CLI / JSONL carry the labels on each bead — read and fold.
+    let BeadsRead { beads, source } =
+        read_beads_cascade(dolt_manager, path, &project_path, None).await?;
+    Ok((labels_from_beads(&beads), source))
 }
 
 /// Request body for creating a new bead.
@@ -1645,6 +1790,92 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_labels_from_bd_json() {
+        // `bd list --json` emits labels for free, so the CLI and JSONL tiers
+        // need no extra query — only this field.
+        let json = r#"{"id":"task-9","title":"T","status":"open","labels":["night-ok","tooling"]}"#;
+        let bead: Bead = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            bead.labels,
+            Some(vec!["night-ok".to_string(), "tooling".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_parse_no_labels_field() {
+        let json = r#"{"id":"task-9","title":"T","status":"open"}"#;
+        let bead: Bead = serde_json::from_str(json).unwrap();
+        assert!(bead.labels.is_none());
+    }
+
+    #[test]
+    fn label_counts_from_rows_sorts_by_count_then_name() {
+        let rows = [("tooling", 4_i64), ("agent-ux", 7), ("cases", 4)];
+        let labels = label_counts_from_rows(&rows);
+
+        assert_eq!(
+            labels,
+            vec![
+                LabelCount { label: "agent-ux".to_string(), count: 7 },
+                LabelCount { label: "cases".to_string(), count: 4 },
+                LabelCount { label: "tooling".to_string(), count: 4 },
+            ]
+        );
+    }
+
+    #[test]
+    fn label_counts_from_rows_drops_blank_labels() {
+        let rows = [("", 3_i64), ("  ", 2), (" tooling ", 1)];
+        let labels = label_counts_from_rows(&rows);
+
+        assert_eq!(
+            labels,
+            vec![LabelCount { label: "tooling".to_string(), count: 1 }]
+        );
+    }
+
+    #[test]
+    fn labels_from_beads_counts_each_bead_once() {
+        let bead = |id: &str, labels: &[&str]| Bead {
+            id: id.to_string(),
+            title: "T".to_string(),
+            description: None,
+            status: "open".to_string(),
+            priority: None,
+            issue_type: None,
+            owner: None,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            closed_at: None,
+            close_reason: None,
+            defer_until: None,
+            comments: None,
+            parent_id: None,
+            children: None,
+            design_doc: None,
+            deps: None,
+            relates_to: None,
+            labels: Some(labels.iter().map(|l| l.to_string()).collect()),
+            dependencies: None,
+        };
+
+        let labels = labels_from_beads(&[
+            bead("a", &["tooling", "night-ok"]),
+            bead("b", &["tooling"]),
+            bead("c", &[]),
+        ]);
+
+        assert_eq!(
+            labels,
+            vec![
+                LabelCount { label: "tooling".to_string(), count: 2 },
+                LabelCount { label: "night-ok".to_string(), count: 1 },
+            ]
+        );
+    }
+
+    #[test]
     fn test_parse_empty_dependencies_array() {
         // Empty dependencies array should parse as None
         let json = r#"{"id":"task-1","title":"No deps","status":"open","dependencies":[]}"#;
@@ -1849,6 +2080,7 @@ mod tests {
             children: None,
             design_doc: None,
             deps: None,
+            labels: None,
             relates_to: Some(vec!["bead-r1".to_string(), "bead-r2".to_string()]),
             dependencies: None,
         };

@@ -108,3 +108,70 @@ describe("useBeadFilters hideDeferred", () => {
     expect(result.current.filteredBeads).toHaveLength(2);
   });
 });
+
+describe("useBeadFilters label filters", () => {
+  const beads = [
+    bead("bweb-1", { labels: ["night-ok", "tooling"] }),
+    bead("bweb-2", { labels: ["tooling"] }),
+    bead("bweb-3", { labels: ["cases"] }),
+    bead("bweb-4"),
+  ];
+
+  it("collects the labels present on the loaded beads with counts", () => {
+    const { result } = renderHook(() => useBeadFilters(beads, ticketNumbers));
+
+    // Most used first, ties broken alphabetically.
+    expect(result.current.availableLabels).toEqual([
+      { label: "tooling", count: 2 },
+      { label: "cases", count: 1 },
+      { label: "night-ok", count: 1 },
+    ]);
+  });
+
+  it("keeps beads carrying ANY of the required labels (OR)", () => {
+    const { result } = renderHook(() => useBeadFilters(beads, ticketNumbers));
+
+    act(() => {
+      result.current.setFilters({ labels: ["night-ok", "cases"] });
+    });
+
+    expect(result.current.filteredBeads.map((b) => b.id).sort()).toEqual([
+      "bweb-1",
+      "bweb-3",
+    ]);
+  });
+
+  it("drops beads carrying an excluded label", () => {
+    const { result } = renderHook(() => useBeadFilters(beads, ticketNumbers));
+
+    act(() => {
+      result.current.setFilters({ excludeLabels: ["tooling"] });
+    });
+
+    expect(result.current.filteredBeads.map((b) => b.id).sort()).toEqual([
+      "bweb-3",
+      "bweb-4",
+    ]);
+  });
+
+  it("lets exclusion win over inclusion", () => {
+    const { result } = renderHook(() => useBeadFilters(beads, ticketNumbers));
+
+    act(() => {
+      result.current.setFilters({ labels: ["tooling"], excludeLabels: ["night-ok"] });
+    });
+
+    expect(result.current.filteredBeads.map((b) => b.id)).toEqual(["bweb-2"]);
+  });
+
+  it("counts label filters as one active filter category", () => {
+    const { result } = renderHook(() => useBeadFilters(beads, ticketNumbers));
+
+    act(() => {
+      result.current.setFilters({ labels: ["tooling"], excludeLabels: ["cases"] });
+    });
+
+    expect(result.current.hasActiveFilters).toBe(true);
+    expect(result.current.activeFilterCount).toBe(1);
+  });
+});

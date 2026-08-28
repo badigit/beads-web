@@ -134,9 +134,22 @@ export interface Bead {
   deps?: string[];            // Dependency IDs (blocking this task)
   blockers?: string[];        // COMPUTED: Tasks this blocks (derived from deps relationships)
   relates_to?: string[];      // Bead IDs with relates-to links (bidirectional "see also")
+  labels?: string[];          // Labels from the flat (issue_id, label) link table
   // Status mapping fields (set by beads-parser when raw status differs from column)
   _originalStatus?: string;   // The raw status from the backend before mapping
   _statusBadge?: StatusBadgeInfo; // Badge info if the bead was mapped to a different column
+}
+
+/**
+ * One label of a project's vocabulary with the number of beads carrying it.
+ *
+ * Beads keeps no dictionary table beside the `(issue_id, label)` link table, so
+ * the vocabulary is derived from the data: `GET /api/beads/labels` aggregates
+ * it server-side. The count keeps rare labels visible in the filter menu.
+ */
+export interface LabelCount {
+  label: string;
+  count: number;
 }
 
 /**

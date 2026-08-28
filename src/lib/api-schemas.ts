@@ -30,6 +30,7 @@ export const BeadSchema = z.object({
   deps: z.array(z.string()).nullish(),
   blockers: z.array(z.string()).nullish(),
   relates_to: z.array(z.string()).nullish(),
+  labels: z.array(z.string()).nullish(),
   _originalStatus: z.string().nullish(),
   close_reason: z.string().nullish(),
   closed_at: z.string().nullish(),
@@ -52,6 +53,20 @@ export const BeadCountsResponseSchema = z.object({
     inreview: z.number(),
     closed: z.number(),
   }),
+  source: z.string().optional(),
+});
+
+/**
+ * Response of `GET /api/beads/labels` — the project's label vocabulary with
+ * per-label bead counts, aggregated server-side.
+ */
+export const BeadLabelsResponseSchema = z.object({
+  labels: z.array(
+    z.object({
+      label: z.string(),
+      count: z.number(),
+    })
+  ),
   source: z.string().optional(),
 });
 

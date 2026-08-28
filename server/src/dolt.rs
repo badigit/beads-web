@@ -211,6 +211,23 @@ impl DoltManager {
         Ok(counts)
     }
 
+    /// Aggregates the database's label vocabulary as `(label, count)` pairs.
+    ///
+    /// The cheap counterpart of reading every bead just to learn which labels
+    /// exist: the `GROUP BY` runs on the Dolt server, so the filter menu costs
+    /// one row per distinct label.
+    pub async fn count_labels(&self, db_name: &str) -> Result<Vec<(String, i64)>, DoltError> {
+        validate_database_name(db_name)?;
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+        let counts = query_label_counts(&mut conn, db_name).await?;
+        self.available.store(true, Ordering::Relaxed);
+        Ok(counts)
+    }
+
     /// Returns a hash identifying the database's current working-set state.
     ///
     /// Used by the live-update poller to tell "nothing changed" from "reload" at
@@ -694,6 +711,7 @@ async fn read_beads_from_conn(
     let beads = query_issues(conn, db_name).await?;
     let mut beads = merge_comments(conn, db_name, beads).await?;
     merge_dependencies(conn, db_name, &mut beads).await?;
+    merge_labels(conn, db_name, &mut beads).await;
     Ok(beads)
 }
 
@@ -837,6 +855,7 @@ async fn query_issues(conn: &mut mysql_async::Conn, db_name: &str) -> Result<Vec
             children: None,
             deps: None,
             relates_to: None,
+            labels: None,
             comments: None,
             dependencies: None,
         })
@@ -995,6 +1014,134 @@ async fn merge_dependencies(
         }
     }
     Ok(())
+}
+
+/// Folds raw `(issue_id, label)` rows into per-issue label lists.
+///
+/// Blank ids/labels and duplicates are dropped and each list is sorted, so the
+/// board renders chips in a stable order whatever order the table returns.
+pub(crate) fn fold_label_rows(rows: Vec<(String, String)>) -> HashMap<String, Vec<String>> {
+    let mut map: HashMap<String, Vec<String>> = HashMap::new();
+    for (issue_id, label) in rows {
+        let label = label.trim().to_string();
+        if issue_id.is_empty() || label.is_empty() {
+            continue;
+        }
+        let entry = map.entry(issue_id).or_default();
+        if !entry.iter().any(|existing| existing == &label) {
+            entry.push(label);
+        }
+    }
+    for labels in map.values_mut() {
+        labels.sort();
+    }
+    map
+}
+
+/// Queries labels and merges them into beads.
+///
+/// One query for the whole database, never one per card: `labels` is a flat
+/// `(issue_id, label)` link table, so every chip on the board costs a single
+/// round trip.
+///
+/// Never fails the read. A database whose schema predates the table (or an
+/// unreadable one) must still render its beads — the error is logged and the
+/// beads come back label-less.
+async fn merge_labels(conn: &mut mysql_async::Conn, db_name: &str, beads: &mut [Bead]) {
+    let query = format!(
+        "SELECT issue_id, label FROM `{}`.labels ORDER BY issue_id, label",
+        db_name
+    );
+    let rows: Vec<Row> = match conn.query(&query).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            warn!(
+                "Failed to read labels for db {}: {} — beads render without labels",
+                db_name, e
+            );
+            return;
+        }
+    };
+
+    let pairs = rows
+        .iter()
+        .map(|row| (get_str(row, "issue_id"), get_str(row, "label")))
+        .collect();
+    let mut map = fold_label_rows(pairs);
+
+    for bead in beads.iter_mut() {
+        if let Some(labels) = map.remove(&bead.id) {
+            bead.labels = Some(labels);
+        }
+    }
+}
+
+/// Runs `SELECT label, COUNT(*) … GROUP BY label` and returns the raw
+/// `(label, count)` pairs — the project's label vocabulary, taken from the
+/// data itself because beads keeps no dictionary table beside the link table.
+///
+/// A missing `labels` table yields an empty vocabulary instead of an error, for
+/// the same reason [`merge_labels`] never fails a read.
+async fn query_label_counts(
+    conn: &mut mysql_async::Conn,
+    db_name: &str,
+) -> Result<Vec<(String, i64)>, DoltError> {
+    // The database name is interpolated into the statement, so it must be
+    // validated first — it can originate from project metadata on disk.
+    validate_discovered_database_name(db_name)?;
+    ensure_database_exists(conn, db_name).await?;
+
+    let query = format!(
+        "SELECT label, COUNT(*) AS cnt FROM `{}`.labels GROUP BY label",
+        db_name
+    );
+    let rows: Vec<Row> = match conn.query(&query).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            warn!(
+                "Failed to aggregate labels for db {}: {} — reporting no labels",
+                db_name, e
+            );
+            return Ok(Vec::new());
+        }
+    };
+
+    Ok(rows
+        .iter()
+        .map(|row| {
+            let label = get_str(row, "label");
+            let count = row.get::<i64, _>("cnt").unwrap_or(0);
+            (label, count)
+        })
+        .collect())
+}
+
+/// Aggregates labels on a Dolt server listening on `port`.
+///
+/// Per-project counterpart of [`DoltManager::count_labels`], mirroring
+/// [`count_issues_by_status_on_port`].
+pub async fn count_labels_on_port(
+    port: u16,
+    db_name: &str,
+) -> Result<Vec<(String, i64)>, DoltError> {
+    let config = DoltConnectConfig::from_env();
+    let pool_opts = PoolOpts::default().with_constraints(PoolConstraints::new(0, 2).unwrap());
+    let opts = config.build_opts(Some(port), pool_opts);
+
+    let pool = Pool::new(opts);
+    let mut conn = pool
+        .get_conn()
+        .await
+        .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+
+    let result = query_label_counts(&mut conn, db_name).await;
+
+    drop(conn);
+    if let Err(e) = pool.disconnect().await {
+        tracing::warn!("Failed to disconnect temporary pool (port {}): {}", port, e);
+    }
+
+    result
 }
 
 /// A discovered Dolt database.
@@ -1453,6 +1600,30 @@ mod tests {
             database_name_for_project(&project),
             Some("beads_cool-project".to_string())
         );
+    }
+
+    #[test]
+    fn fold_label_rows_groups_sorts_and_dedupes() {
+        let map = fold_label_rows(vec![
+            ("a".to_string(), "tooling".to_string()),
+            ("a".to_string(), "agent-ux".to_string()),
+            ("a".to_string(), "tooling".to_string()),
+            ("b".to_string(), " night-ok ".to_string()),
+        ]);
+
+        assert_eq!(map["a"], vec!["agent-ux".to_string(), "tooling".to_string()]);
+        // Whitespace around a label is storage noise, not part of its name.
+        assert_eq!(map["b"], vec!["night-ok".to_string()]);
+    }
+
+    #[test]
+    fn fold_label_rows_skips_blank_ids_and_labels() {
+        let map = fold_label_rows(vec![
+            ("".to_string(), "tooling".to_string()),
+            ("a".to_string(), "   ".to_string()),
+        ]);
+
+        assert!(map.is_empty());
     }
 
     #[test]

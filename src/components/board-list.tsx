@@ -3,6 +3,7 @@
 import { CornerDownRight, PackageOpen } from "lucide-react";
 
 import { CopyableText } from "@/components/copyable-text";
+import { LabelChips } from "@/components/label-chips";
 import { formatStatus, getStatusDotColor, isBlocked, truncate } from "@/lib/bead-utils";
 import { cn } from "@/lib/utils";
 import type { Bead } from "@/types";
@@ -95,6 +96,7 @@ export function BoardListRow({
           >
             {truncate(bead.title, 90)}
           </span>
+          <LabelChips labels={bead.labels} max={2} className="shrink-0" />
         </div>
         {bead.parent_id && (
           <div
