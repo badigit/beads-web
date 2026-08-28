@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 
-import { Search, X, ArrowUpDown, SlidersHorizontal, BrainCircuit, Bot, AlertTriangle, Plus } from 'lucide-react';
+import { Search, X, ArrowUpDown, SlidersHorizontal, BrainCircuit, Bot, AlertTriangle, Plus, Check, Minus } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -22,8 +22,9 @@ import {
   TooltipContent,
   TooltipProvider,
 } from '@/components/ui/tooltip';
+import { labelFilterState } from '@/lib/label-filter';
 import { cn } from '@/lib/utils';
-import type { BeadStatus } from '@/types';
+import type { BeadStatus, LabelCount } from '@/types';
 
 type TypeFilter = 'all' | 'epics' | 'tasks';
 type SortField = 'ticket_number' | 'created_at';
@@ -60,6 +61,19 @@ interface QuickFilterBarProps {
   onOwnerToggle: (owner: string) => void;
   /** List of available owners */
   availableOwners: string[];
+  /** Labels required (OR) — a bead passes when it carries any of them */
+  labels: string[];
+  /** Labels that hide a bead */
+  excludeLabels: string[];
+  /**
+   * The project's label vocabulary with counts, most used first. Comes from
+   * the database, so a label used only on closed beads is still offered.
+   */
+  availableLabels: LabelCount[];
+  /** Cycle one label: off -> include -> exclude -> off */
+  onLabelCycle: (label: string) => void;
+  /** Drop one label from both filter lists */
+  onLabelClear: (label: string) => void;
   /** Callback to clear all filters */
   onClearFilters: () => void;
   /** Whether any filters are active */
@@ -126,6 +140,11 @@ export function QuickFilterBar({
   owners,
   onOwnerToggle,
   availableOwners,
+  labels,
+  excludeLabels,
+  availableLabels,
+  onLabelCycle,
+  onLabelClear,
   onClearFilters,
   hasActiveFilters,
   isMemoryOpen,
@@ -268,6 +287,39 @@ export function QuickFilterBar({
         </button>
       )}
 
+      {/* Active label filters — the board must show WHICH label it is filtered
+          by, not merely that some filter is on (that is the whole point of the
+          night-ok mandate being visible at a glance). */}
+      {(labels.length > 0 || excludeLabels.length > 0) && (
+        <div className="flex flex-wrap items-center gap-1" aria-label="Active label filters">
+          {labels.map((label) => (
+            <button
+              key={`include-${label}`}
+              type="button"
+              onClick={() => onLabelClear(label)}
+              aria-label={`Remove label filter ${label}`}
+              className="flex max-w-[160px] items-center gap-1 rounded-md bg-epic/20 px-2 py-1 text-xs font-medium text-epic hover:bg-epic/30"
+            >
+              <span className="truncate">{label}</span>
+              <X className="size-3 shrink-0" aria-hidden="true" />
+            </button>
+          ))}
+          {excludeLabels.map((label) => (
+            <button
+              key={`exclude-${label}`}
+              type="button"
+              onClick={() => onLabelClear(label)}
+              aria-label={`Remove excluded label ${label}`}
+              className="flex max-w-[160px] items-center gap-1 rounded-md bg-danger/15 px-2 py-1 text-xs font-medium text-danger hover:bg-danger/25"
+            >
+              <Minus className="size-3 shrink-0" aria-hidden="true" />
+              <span className="truncate">{label}</span>
+              <X className="size-3 shrink-0" aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Unknown status warning indicator */}
       {unknownStatusCount > 0 && (
         <TooltipProvider delayDuration={200}>
@@ -387,6 +439,53 @@ export function QuickFilterBar({
                   {owner}
                 </DropdownMenuCheckboxItem>
               ))}
+            </>
+          )}
+
+          {availableLabels.length > 0 && (
+            <>
+              <DropdownMenuSeparator className="bg-surface-overlay" />
+              <DropdownMenuLabel className="text-t-tertiary">
+                Label
+                <span className="block text-[10px] font-normal text-t-faint">
+                  click cycles: include → exclude → off
+                </span>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator className="bg-surface-overlay" />
+              <div className="max-h-56 overflow-y-auto">
+                {availableLabels.map(({ label, count }) => {
+                  const state = labelFilterState(label, labels, excludeLabels);
+                  return (
+                    <DropdownMenuItem
+                      key={label}
+                      // Keep the menu open: picking several labels is the
+                      // normal case, reopening it per label is not.
+                      onSelect={(event) => {
+                        event.preventDefault();
+                        onLabelCycle(label);
+                      }}
+                      aria-label={`Label ${label}, ${count} ${count === 1 ? 'bead' : 'beads'}, ${state}`}
+                      className="text-t-secondary focus:bg-surface-overlay focus:text-t-primary"
+                    >
+                      <span className="flex w-4 shrink-0 justify-center">
+                        {state === 'include' && <Check className="size-3.5 text-epic" aria-hidden="true" />}
+                        {state === 'exclude' && <Minus className="size-3.5 text-danger" aria-hidden="true" />}
+                      </span>
+                      <span
+                        className={cn(
+                          'flex-1 truncate',
+                          state === 'exclude' && 'line-through decoration-danger/60'
+                        )}
+                      >
+                        {label}
+                      </span>
+                      <span className="ml-2 shrink-0 text-[10px] tabular-nums text-t-faint">
+                        {count}
+                      </span>
+                    </DropdownMenuItem>
+                  );
+                })}
+              </div>
             </>
           )}
 

@@ -29,6 +29,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useBeadDetail } from "@/hooks/use-bead-detail";
 import { useBeadFilters } from "@/hooks/use-bead-filters";
+import { useBeadLabels } from "@/hooks/use-bead-labels";
 import { useBeadUrlSync } from "@/hooks/use-bead-url-sync";
 import { useBeads } from "@/hooks/use-beads";
 import { useBoardView, type BoardView } from "@/hooks/use-board-view";
@@ -41,6 +42,7 @@ import { useWorktreeStatuses } from "@/hooks/use-worktree-statuses";
 import { isBlocked } from "@/lib/bead-utils";
 import { getUnknownStatusBeads, getUnknownStatusNames } from "@/lib/beads-parser";
 import { isFlatSearchMode, selectBoardBeads, selectListBeads, type IssueTypeFilter } from "@/lib/board-beads";
+import { clearLabelFilter, cycleLabelFilter } from "@/lib/label-filter";
 import { isDoltProject } from "@/lib/utils";
 import type { Bead, BeadStatus } from "@/types";
 
@@ -132,8 +134,15 @@ export default function KanbanBoard() {
     clearFilters,
     hasActiveFilters,
     availableOwners,
+    availableLabels,
     debouncedSearch,
   } = useBeadFilters(beads, ticketNumbers, 300);
+
+  // The project's label vocabulary, aggregated from the database. Falls back
+  // to the labels seen on the loaded beads when that request fails, so the
+  // filter menu never goes empty just because the endpoint is unavailable.
+  const { labels: labelVocabulary } = useBeadLabels(project?.path ?? "");
+  const labelOptions = labelVocabulary.length > 0 ? labelVocabulary : availableLabels;
 
   // Issue type filter state (epics vs tasks)
   const [typeFilter, setTypeFilter] = useState<IssueTypeFilter>("all");
@@ -200,6 +209,20 @@ export default function KanbanBoard() {
       : [...filters.owners, owner];
     setFilters({ owners: newOwners });
   }, [filters.owners, setFilters]);
+
+  /**
+   * Cycle a label through off → include → exclude → off
+   */
+  const cycleLabel = useCallback((label: string) => {
+    setFilters(cycleLabelFilter(label, filters.labels, filters.excludeLabels));
+  }, [filters.labels, filters.excludeLabels, setFilters]);
+
+  /**
+   * Drop a label from both filter lists (the chips' X button)
+   */
+  const clearLabel = useCallback((label: string) => {
+    setFilters(clearLabelFilter(label, filters.labels, filters.excludeLabels));
+  }, [filters.labels, filters.excludeLabels, setFilters]);
 
   // Filter out closed beads to avoid unnecessary polling for finalized tasks
   const beadIds = useMemo(() => beads.filter(b => b.status !== 'closed').map(b => b.id), [beads]);
@@ -421,6 +444,12 @@ export default function KanbanBoard() {
           owners={filters.owners}
           onOwnerToggle={toggleOwner}
           availableOwners={availableOwners}
+          // Label filters
+          labels={filters.labels}
+          excludeLabels={filters.excludeLabels}
+          availableLabels={labelOptions}
+          onLabelCycle={cycleLabel}
+          onLabelClear={clearLabel}
           hideDeferred={filters.hideDeferred}
           onHideDeferredChange={(value) => setFilters({ hideDeferred: value })}
           onClearFilters={clearFilters}

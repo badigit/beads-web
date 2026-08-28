@@ -3,8 +3,8 @@
  * Replaces Tauri invoke() calls with HTTP fetch to backend
  */
 
-import { BeadCountsResponseSchema, BeadsResponseSchema, PRStatusSchema, WorktreeStatusSchema } from '@/lib/api-schemas';
-import type { Project, Tag, Bead, BeadCounts, WorktreeStatus, WorktreeEntry, PRStatus, PRFilesResponse, MemoryResponse, MemoryStats, MemoryEntry, Agent, AgentModel } from '@/types';
+import { BeadCountsResponseSchema, BeadLabelsResponseSchema, BeadsResponseSchema, PRStatusSchema, WorktreeStatusSchema } from '@/lib/api-schemas';
+import type { Project, Tag, Bead, BeadCounts, LabelCount, WorktreeStatus, WorktreeEntry, PRStatus, PRFilesResponse, MemoryResponse, MemoryStats, MemoryEntry, Agent, AgentModel } from '@/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
 
@@ -49,6 +49,15 @@ export interface BdCommandResult {
   stdout: string;
   stderr: string;
   code: number;
+}
+
+/**
+ * Response of `GET /api/beads/labels`
+ */
+export interface BeadLabelsResponse {
+  labels: LabelCount[];
+  /** Tier the vocabulary came from: dolt-direct | dolt-project | dolt-central | cli | jsonl */
+  source?: string;
 }
 
 /**
@@ -190,6 +199,17 @@ export const beads = {
     const params = new URLSearchParams({ path });
     const data = await fetchApi<BeadCountsResponse>(`/api/beads/counts?${params}`);
     BeadCountsResponseSchema.parse(data);
+    return data;
+  },
+
+  /**
+   * The project's label vocabulary with per-label bead counts, aggregated by
+   * the backend from the `labels` link table (there is no dictionary table).
+   */
+  labels: async (path: string) => {
+    const params = new URLSearchParams({ path });
+    const data = await fetchApi<BeadLabelsResponse>(`/api/beads/labels?${params}`);
+    BeadLabelsResponseSchema.parse(data);
     return data;
   },
 

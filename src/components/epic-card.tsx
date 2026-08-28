@@ -7,6 +7,7 @@ import { CheckCircle2, ChevronDown, ChevronRight, Layers, Loader2, MessageSquare
 import { CopyableText } from "@/components/copyable-text";
 import { DependencyBadge } from "@/components/dependency-badge";
 import { DesignDocPreview } from "@/components/design-doc-preview";
+import { LabelChips } from "@/components/label-chips";
 import { SubtaskList, ChildPRStatus } from "@/components/subtask-list";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -330,6 +331,7 @@ export function EpicCard({
               <span className="text-[13px] font-semibold text-t-primary truncate">{epic.title}</span>
               {statusBadge}
               <span className="text-[10px] font-semibold text-epic shrink-0">EPIC</span>
+              <LabelChips labels={epic.labels} max={2} className="shrink-0" />
             </div>
             {progressSection}
             {closeButton}
@@ -362,6 +364,8 @@ export function EpicCard({
           {epic.description && (
             <p className="text-xs text-t-muted leading-relaxed">{truncate(epic.description, 80)}</p>
           )}
+
+          <LabelChips labels={epic.labels} />
 
           {/* Property tags */}
           <div className="flex flex-wrap items-center gap-1.5">
@@ -447,6 +451,8 @@ export function EpicCard({
         {epic.description && (
           <p className="text-xs text-t-tertiary leading-relaxed">{truncate(epic.description, 100)}</p>
         )}
+
+        <LabelChips labels={epic.labels} />
 
         {/* Progress */}
         <div className="space-y-1.5">

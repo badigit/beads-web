@@ -3,6 +3,7 @@
 import { FolderOpen, GitPullRequest, Link2, MessageSquare, Check, X, Clock } from "lucide-react";
 
 import { CopyableText } from "@/components/copyable-text";
+import { LabelChips } from "@/components/label-chips";
 import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/hooks/use-theme";
 import {
@@ -286,6 +287,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
 
         {/* Right badges */}
         <div className="flex items-center gap-1.5 shrink-0">
+          <LabelChips labels={bead.labels} max={2} />
           {statusBadge}
           {commentCount > 0 && (
             <span className="flex items-center gap-0.5 text-[11px] text-t-faint">
@@ -363,6 +365,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
               P{bead.priority}
             </span>
           )}
+          <LabelChips labels={bead.labels} />
           {inlinePRBadge}
           {commentCount > 0 && (
             <span className="text-[10px] text-t-faint px-1">
@@ -435,6 +438,9 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
               {truncate(bead.description, 80)}
             </p>
           )}
+
+          {/* Labels */}
+          <LabelChips labels={bead.labels} className="pt-0.5" />
         </div>
 
         {/* Worktree and PR status box */}

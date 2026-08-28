@@ -16,6 +16,7 @@ import { CopyableText } from "@/components/copyable-text";
 import { CreateBeadDialog } from "@/components/create-bead-dialog";
 import { DesignDocViewer } from "@/components/design-doc-viewer";
 import { EditableField } from "@/components/editable-field";
+import { LabelChips } from "@/components/label-chips";
 import { SpawnSessionButton } from "@/components/spawn-session-button";
 import { SubtaskList } from "@/components/subtask-list";
 import { Badge } from "@/components/ui/badge";
@@ -309,6 +310,11 @@ export function BeadDetail({
               wrapperClassName="ml-auto"
             />
           </div>
+
+          {/* Labels — shown in full here; the cards collapse the tail. */}
+          {(bead.labels ?? []).length > 0 && (
+            <LabelChips labels={bead.labels} max={Infinity} className="mt-3" />
+          )}
 
           {parentEpic && onChildClick && (
             <button
