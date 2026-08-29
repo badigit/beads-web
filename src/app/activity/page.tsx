@@ -1,31 +1,73 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
+
 import { useRouter } from "next/navigation";
 
 import { ArrowLeft, History, RefreshCw } from "lucide-react";
 
 import { ActivityDays } from "@/components/activity-days";
+import { BeadDetail } from "@/components/bead-detail";
+import { CommentList } from "@/components/comment-list";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { Button } from "@/components/ui/button";
 import { useAllActivity } from "@/hooks/use-activity";
+import { useBeads } from "@/hooks/use-beads";
+import * as api from "@/lib/api";
 import { cn } from "@/lib/utils";
+import type { Bead, Project } from "@/types";
 
 /**
  * Cross-project activity: every beads database merged into one timeline.
  *
  * The dashboard's answer to "what have I been working on" — with thirty
- * projects, opening each one to see its own feed is not an answer at all.
- * Rows carry their project, and clicking one opens that bead in its project.
+ * projects, opening each one to read its own feed is not an answer at all.
+ *
+ * A row opens its bead in the same detail panel the board uses, right here:
+ * being thrown onto another page to read one bead defeats the point of having
+ * everything in one list.
  */
 export default function ActivityPage() {
   const router = useRouter();
   const { events, isLoading, isLoadingMore, error, hasMore, loadMore, refresh } = useAllActivity();
 
-  const openBead = (beadId: string, projectId?: string | null) => {
-    // Without a registry entry there is no project page to open — the feed
-    // still shows the row, it just cannot route anywhere.
+  // The feed carries project ids; the path (needed to read beads and to write
+  // through bd) lives in the registry, so the list is fetched once.
+  const [projects, setProjects] = useState<Project[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    api.projects
+      .list()
+      .then((list) => {
+        if (!cancelled) setProjects(list);
+      })
+      .catch((e: unknown) => {
+        console.error("Activity: project registry unavailable", e);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const [selected, setSelected] = useState<{ beadId: string; projectId: string } | null>(null);
+  const selectedProject = projects.find((project) => project.id === selected?.projectId);
+
+  // Beads of the clicked project only: the detail panel needs siblings to
+  // resolve dependencies, children and blocked state. Loading stays scoped to
+  // one project and is cached by the hook between clicks.
+  const { beads, refresh: refreshBeads } = useBeads(selectedProject?.path ?? "");
+  const bead = selected ? (beads.find((item) => item.id === selected.beadId) ?? null) : null;
+
+  const openBead = useCallback((beadId: string, projectId?: string | null) => {
+    // Without a registry entry there is nothing to load the bead from — the row
+    // still renders, it just cannot be opened.
     if (!projectId) return;
-    router.push(`/project?id=${projectId}&bead=${encodeURIComponent(beadId)}`);
-  };
+    setSelected({ beadId, projectId });
+  }, []);
+
+  const openChild = useCallback((child: Bead) => {
+    setSelected((current) => (current ? { ...current, beadId: child.id } : current));
+  }, []);
 
   return (
     <div className="flex min-h-dvh flex-col bg-surface-base">
@@ -76,6 +118,30 @@ export default function ActivityPage() {
           emptyMessage="No recorded activity across your projects yet."
         />
       </main>
+
+      <ErrorBoundary label="Bead Detail">
+        {bead && selectedProject && (
+          <BeadDetail
+            bead={bead}
+            open
+            onOpenChange={(open) => {
+              if (!open) setSelected(null);
+            }}
+            projectPath={selectedProject.path}
+            projectId={selectedProject.id}
+            allBeads={beads}
+            onChildClick={openChild}
+            onUpdate={refreshBeads}
+          >
+            <CommentList
+              comments={bead.comments}
+              beadId={bead.id}
+              projectPath={selectedProject.path}
+              onCommentAdded={refreshBeads}
+            />
+          </BeadDetail>
+        )}
+      </ErrorBoundary>
     </div>
   );
 }
