@@ -15,6 +15,7 @@ use tokio::net::TcpStream;
 use tracing::{info, warn};
 
 use crate::routes::activity::RawActivityRow;
+use crate::routes::all_beads::{IssueQuery, IssueRow};
 use crate::routes::beads::{Bead, Comment, DOLT_PATH_PREFIX};
 
 /// Connection parameters for a Dolt SQL server (central or per-project host).
@@ -227,6 +228,23 @@ impl DoltManager {
         let counts = query_label_counts(&mut conn, db_name).await?;
         self.available.store(true, Ordering::Relaxed);
         Ok(counts)
+    }
+
+    /// Reads a slim page of issues for the cross-project grid.
+    pub async fn read_issue_rows(
+        &self,
+        db_name: &str,
+        query: &IssueQuery,
+    ) -> Result<Vec<IssueRow>, DoltError> {
+        validate_database_name(db_name)?;
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+        let rows = query_issue_rows(&mut conn, db_name, query).await?;
+        self.available.store(true, Ordering::Relaxed);
+        Ok(rows)
     }
 
     /// Reads one page of the database's event log, newest first.
@@ -1311,6 +1329,146 @@ pub async fn read_activity_on_port(
     }
 
     result
+}
+
+/// Reads a slim page of issues for the cross-project grid.
+///
+/// Deliberately narrow columns: the grid shows a line per bead across every
+/// project, so `description` (and the rest of the long text) never leaves the
+/// server — pulling it for fifty databases would turn a table into megabytes.
+///
+/// Filters run here rather than on the client for the same reason: filtering
+/// after transfer means transferring what you are about to throw away.
+///
+/// A database without an `issues` table is not a beads database at all, so an
+/// empty page is the honest answer; other query failures are propagated.
+async fn query_issue_rows(
+    conn: &mut mysql_async::Conn,
+    db_name: &str,
+    query: &IssueQuery,
+) -> Result<Vec<IssueRow>, DoltError> {
+    // The database name is interpolated into the statement, so it must be
+    // validated first — it can originate from project metadata on disk.
+    validate_discovered_database_name(db_name)?;
+    ensure_database_exists(conn, db_name).await?;
+
+    if !has_table(conn, db_name, "issues").await {
+        return Ok(Vec::new());
+    }
+
+    // Every value is bound positionally; only the validated database name and
+    // the integer limit reach the SQL as text.
+    let mut conditions: Vec<String> = Vec::new();
+    let mut params: Vec<mysql_async::Value> = Vec::new();
+
+    if !query.statuses.is_empty() {
+        conditions.push(format!("i.status IN ({})", placeholders(query.statuses.len())));
+        params.extend(query.statuses.iter().map(|status| status.as_str().into()));
+    }
+    if !query.priorities.is_empty() {
+        conditions.push(format!(
+            "i.priority IN ({})",
+            placeholders(query.priorities.len())
+        ));
+        params.extend(query.priorities.iter().map(|priority| (*priority).into()));
+    }
+    if !query.labels.is_empty() {
+        // OR across labels: a bead qualifies if it carries any of them.
+        conditions.push(format!(
+            "EXISTS (SELECT 1 FROM `{db}`.labels l WHERE l.issue_id = i.id AND l.label IN ({slots}))",
+            db = db_name,
+            slots = placeholders(query.labels.len())
+        ));
+        params.extend(query.labels.iter().map(|label| label.as_str().into()));
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    let sql = format!(
+        "SELECT i.id, i.title, i.status, i.priority, i.issue_type, i.owner, \
+         DATE_FORMAT(i.created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at, \
+         DATE_FORMAT(i.updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_at \
+         FROM `{db}`.issues i \
+         {where_clause} \
+         ORDER BY i.updated_at DESC \
+         LIMIT {limit}",
+        db = db_name,
+        where_clause = where_clause,
+        limit = query.limit
+    );
+
+    let rows: Vec<Row> = if params.is_empty() {
+        conn.query(&sql).await
+    } else {
+        conn.exec(&sql, mysql_async::Params::Positional(params)).await
+    }
+    .map_err(|e| DoltError::QueryFailed(format!("issue rows: {}", e)))?;
+
+    let mut issues: Vec<IssueRow> = rows
+        .iter()
+        .map(|row| IssueRow {
+            id: get_str(row, "id"),
+            title: get_str(row, "title"),
+            status: get_opt_str(row, "status").unwrap_or_else(|| "open".to_string()),
+            priority: row.get::<Option<i32>, _>("priority").flatten(),
+            issue_type: get_opt_str(row, "issue_type"),
+            owner: get_opt_str(row, "owner"),
+            created_at: get_opt_str(row, "created_at"),
+            updated_at: get_opt_str(row, "updated_at"),
+            labels: Vec::new(),
+            project_id: None,
+            project_name: None,
+        })
+        .collect();
+
+    attach_labels(conn, db_name, &mut issues).await;
+    Ok(issues)
+}
+
+/// `?, ?, ?` — one positional slot per value.
+fn placeholders(count: usize) -> String {
+    std::iter::repeat_n("?", count).collect::<Vec<_>>().join(", ")
+}
+
+/// Fills in the labels of an already-selected page.
+///
+/// One query for the page rather than one per row; a failure leaves the rows
+/// label-less instead of failing the grid.
+async fn attach_labels(conn: &mut mysql_async::Conn, db_name: &str, issues: &mut [IssueRow]) {
+    if issues.is_empty() {
+        return;
+    }
+
+    let sql = format!(
+        "SELECT issue_id, label FROM `{}`.labels ORDER BY issue_id, label",
+        db_name
+    );
+    let rows: Vec<Row> = match conn.query(&sql).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            warn!(
+                "Failed to read labels for db {}: {} — grid rows render without labels",
+                db_name, e
+            );
+            return;
+        }
+    };
+
+    let pairs = rows
+        .iter()
+        .map(|row| (get_str(row, "issue_id"), get_str(row, "label")))
+        .collect();
+    let mut map = fold_label_rows(pairs);
+
+    for issue in issues.iter_mut() {
+        if let Some(labels) = map.remove(&issue.id) {
+            issue.labels = labels;
+        }
+    }
 }
 
 /// A discovered Dolt database.
