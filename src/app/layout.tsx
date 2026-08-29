@@ -3,11 +3,12 @@ import { Inter, Space_Grotesk, Space_Mono, Plus_Jakarta_Sans } from 'next/font/g
 import { DevTools } from '@/components/dev-tools';
 import { GlobalSearch } from '@/components/global-search';
 import { GlobalSettingsButton } from '@/components/global-settings-button';
+import { ServiceWorkerRegistration } from '@/components/service-worker-registration';
 import { ThemeInitScript } from '@/components/theme-init';
 import { Toaster } from '@/components/ui/toaster';
 import { UpdateBanner } from '@/components/update-banner';
 
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 const inter = Inter({
@@ -38,6 +39,22 @@ const plusJakartaSans = Plus_Jakarta_Sans({
 export const metadata: Metadata = {
   title: 'Beads',
   description: 'Kanban interface for beads - git-backed distributed issue tracker',
+  // Makes Chrome offer "Install app": installed, Beads Web gets its own window
+  // and its own taskbar icon instead of being one tab among thirty.
+  manifest: '/manifest.json',
+  applicationName: 'Beads',
+  appleWebApp: { capable: true, title: 'Beads', statusBarStyle: 'black-translucent' },
+  icons: {
+    icon: [
+      { url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: '/icons/icon-192.png',
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: '#0a0a0a',
 };
 
 export default function RootLayout({
@@ -54,6 +71,7 @@ export default function RootLayout({
         <div className="flex-1">{children}</div>
         <GlobalSearch />
         <GlobalSettingsButton />
+        <ServiceWorkerRegistration />
         <UpdateBanner />
         <DevTools />
         <Toaster />
