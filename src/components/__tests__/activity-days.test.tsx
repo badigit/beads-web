@@ -43,10 +43,13 @@ describe("ActivityDays", () => {
     expect(screen.queryByText(/badigit/)).not.toBeInTheDocument();
   });
 
-  it("puts the project in the line, not in its own column", () => {
-    const { container } = renderDays([event()], { showProject: true });
+  it("puts the project on its own line under the title", () => {
+    renderDays([event()], { showProject: true });
 
-    expect(container.textContent).toContain("· beads-web");
+    const project = screen.getByText("beads-web");
+    // Under the title, not glued to it: the title keeps the full line width.
+    expect(project.tagName).toBe("DIV");
+    expect(project).not.toContainElement(screen.getByRole("button", { name: "Целевая задача" }));
   });
 
   it("hands the row's project to the click handler so the feed can open it", () => {
