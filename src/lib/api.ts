@@ -3,8 +3,8 @@
  * Replaces Tauri invoke() calls with HTTP fetch to backend
  */
 
-import { BeadCountsResponseSchema, BeadLabelsResponseSchema, BeadsResponseSchema, PRStatusSchema, WorktreeStatusSchema } from '@/lib/api-schemas';
-import type { Project, Tag, Bead, BeadCounts, LabelCount, WorktreeStatus, WorktreeEntry, PRStatus, PRFilesResponse, MemoryResponse, MemoryStats, MemoryEntry, Agent, AgentModel } from '@/types';
+import { ActivityResponseSchema, BeadCountsResponseSchema, BeadLabelsResponseSchema, BeadsResponseSchema, PRStatusSchema, WorktreeStatusSchema } from '@/lib/api-schemas';
+import type { Project, Tag, Bead, BeadCounts, LabelCount, ActivityEvent, WorktreeStatus, WorktreeEntry, PRStatus, PRFilesResponse, MemoryResponse, MemoryStats, MemoryEntry, Agent, AgentModel } from '@/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
 
@@ -223,6 +223,37 @@ export const beads = {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
+};
+
+/**
+ * Response of `GET /api/activity`
+ */
+export interface ActivityResponse {
+  events: ActivityEvent[];
+  /** Tier the feed came from: dolt-direct | dolt-project | dolt-central | none */
+  source?: string;
+}
+
+/**
+ * Workspace activity feed — what happened in the project, newest first.
+ *
+ * Paging is by timestamp, not offset: `before` walks backwards, `since` picks
+ * up what appeared after the last load. An offset would drift under a feed that
+ * grows while it is being read.
+ */
+export const activity = {
+  read: async (
+    path: string,
+    options?: { limit?: number; before?: string; since?: string }
+  ) => {
+    const params = new URLSearchParams({ path });
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.before) params.set('before', options.before);
+    if (options?.since) params.set('since', options.since);
+    const data = await fetchApi<ActivityResponse>(`/api/activity?${params}`);
+    ActivityResponseSchema.parse(data);
+    return data;
+  },
 };
 
 /**

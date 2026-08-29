@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tracing::{info, warn};
 
+use crate::routes::activity::RawActivityRow;
 use crate::routes::beads::{Bead, Comment, DOLT_PATH_PREFIX};
 
 /// Connection parameters for a Dolt SQL server (central or per-project host).
@@ -226,6 +227,26 @@ impl DoltManager {
         let counts = query_label_counts(&mut conn, db_name).await?;
         self.available.store(true, Ordering::Relaxed);
         Ok(counts)
+    }
+
+    /// Reads one page of the database's event log, newest first.
+    ///
+    /// Feeds `GET /api/activity`: the board shows the current state, this shows
+    /// how it got there.
+    pub async fn read_activity(
+        &self,
+        db_name: &str,
+        query: &ActivityQuery,
+    ) -> Result<Vec<RawActivityRow>, DoltError> {
+        validate_database_name(db_name)?;
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+        let rows = query_activity(&mut conn, db_name, query).await?;
+        self.available.store(true, Ordering::Relaxed);
+        Ok(rows)
     }
 
     /// Returns a hash identifying the database's current working-set state.
@@ -779,6 +800,26 @@ async fn query_status_counts(
         .collect())
 }
 
+/// Returns `true` when `db_name` has a table called `table`.
+async fn has_table(conn: &mut mysql_async::Conn, db_name: &str, table: &str) -> bool {
+    let query = "SELECT COUNT(*) AS cnt FROM information_schema.TABLES \
+                 WHERE TABLE_SCHEMA = :db AND TABLE_NAME = :tbl";
+    match conn
+        .exec_first::<i64, _, _>(query, mysql_async::params! { "db" => db_name, "tbl" => table })
+        .await
+    {
+        Ok(Some(count)) => count > 0,
+        Ok(None) => false,
+        Err(e) => {
+            warn!(
+                "Failed to introspect table {} in db {}: {} — assuming absent",
+                table, db_name, e
+            );
+            false
+        }
+    }
+}
+
 /// Returns `true` when `table` in `db_name` has a column called `column`.
 ///
 /// Used to keep the issues query working against older Dolt schemas that
@@ -1135,6 +1176,134 @@ pub async fn count_labels_on_port(
         .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
 
     let result = query_label_counts(&mut conn, db_name).await;
+
+    drop(conn);
+    if let Err(e) = pool.disconnect().await {
+        tracing::warn!("Failed to disconnect temporary pool (port {}): {}", port, e);
+    }
+
+    result
+}
+
+/// What slice of the event log to read.
+///
+/// `before`/`since` take the same ISO timestamps the API emits, so the client
+/// pages by handing back a value it already has instead of counting offsets —
+/// an offset would drift under a feed that grows while you read it.
+#[derive(Debug, Clone, Default)]
+pub struct ActivityQuery {
+    /// Page size. Already clamped by the caller.
+    pub limit: u32,
+    /// Only events strictly older than this timestamp (paging backwards).
+    pub before: Option<String>,
+    /// Only events strictly newer than this timestamp (incremental refresh).
+    pub since: Option<String>,
+}
+
+/// Reads one page of the event log, newest first, with bead titles resolved.
+///
+/// One query for the whole page: the title comes from a `LEFT JOIN` on `issues`
+/// rather than a lookup per row, and the join is left so an event whose bead was
+/// deleted or compacted still shows up instead of silently vanishing.
+///
+/// A database with no `events` table (older schema) yields an empty page. Any
+/// other failure is propagated: an empty feed and a broken query look identical
+/// on screen, so a real error must never be laundered into "nothing happened".
+async fn query_activity(
+    conn: &mut mysql_async::Conn,
+    db_name: &str,
+    query: &ActivityQuery,
+) -> Result<Vec<RawActivityRow>, DoltError> {
+    // The database name is interpolated into the statement, so it must be
+    // validated first — it can originate from project metadata on disk.
+    validate_discovered_database_name(db_name)?;
+    ensure_database_exists(conn, db_name).await?;
+
+    if !has_table(conn, db_name, "events").await {
+        return Ok(Vec::new());
+    }
+
+    // Bounds are bound as parameters; only the validated database name and the
+    // integer limit are interpolated.
+    let mut conditions = Vec::new();
+    if query.before.is_some() {
+        conditions.push("e.created_at < :before");
+    }
+    if query.since.is_some() {
+        conditions.push("e.created_at > :since");
+    }
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    let sql = format!(
+        "SELECT e.id, e.issue_id, i.title AS issue_title, e.event_type, e.actor, \
+         e.new_value, e.comment, \
+         DATE_FORMAT(e.created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at \
+         FROM `{db}`.events e \
+         LEFT JOIN `{db}`.issues i ON i.id = e.issue_id \
+         {where_clause} \
+         ORDER BY e.created_at DESC, e.id DESC \
+         LIMIT {limit}",
+        db = db_name,
+        where_clause = where_clause,
+        limit = query.limit
+    );
+
+    // Named params must match the statement exactly: handing mysql_async a
+    // parameter the SQL never mentions fails with "Named params given where
+    // positional params are expected", so an unfiltered page uses `query`.
+    let mut named: Vec<(String, mysql_async::Value)> = Vec::new();
+    if let Some(before) = &query.before {
+        named.push(("before".to_string(), before.as_str().into()));
+    }
+    if let Some(since) = &query.since {
+        named.push(("since".to_string(), since.as_str().into()));
+    }
+
+    let rows: Vec<Row> = if named.is_empty() {
+        conn.query(&sql).await
+    } else {
+        conn.exec(&sql, mysql_async::Params::from(named)).await
+    }
+    .map_err(|e| DoltError::QueryFailed(format!("activity: {}", e)))?;
+
+    Ok(rows
+        .iter()
+        .map(|row| RawActivityRow {
+            id: get_str(row, "id"),
+            issue_id: get_str(row, "issue_id"),
+            issue_title: get_opt_str(row, "issue_title"),
+            event_type: get_str(row, "event_type"),
+            actor: get_str(row, "actor"),
+            new_value: get_opt_str(row, "new_value"),
+            comment: get_opt_str(row, "comment"),
+            created_at: get_str(row, "created_at"),
+        })
+        .collect())
+}
+
+/// Reads the event log from a Dolt server listening on `port`.
+///
+/// Per-project counterpart of [`DoltManager::read_activity`].
+pub async fn read_activity_on_port(
+    port: u16,
+    db_name: &str,
+    query: &ActivityQuery,
+) -> Result<Vec<RawActivityRow>, DoltError> {
+    let config = DoltConnectConfig::from_env();
+    let pool_opts = PoolOpts::default().with_constraints(PoolConstraints::new(0, 2).unwrap());
+    let opts = config.build_opts(Some(port), pool_opts);
+
+    let pool = Pool::new(opts);
+    let mut conn = pool
+        .get_conn()
+        .await
+        .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+
+    let result = query_activity(&mut conn, db_name, query).await;
 
     drop(conn);
     if let Err(e) = pool.disconnect().await {

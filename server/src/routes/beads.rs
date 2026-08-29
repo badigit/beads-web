@@ -681,7 +681,7 @@ pub async fn read_beads(
 }
 
 /// Error response returned by the shared bead-source helpers.
-type RouteError = (StatusCode, Json<serde_json::Value>);
+pub(super) type RouteError = (StatusCode, Json<serde_json::Value>);
 
 /// Beads resolved through the fallback cascade, plus the tier they came from.
 struct BeadsRead {
@@ -689,7 +689,7 @@ struct BeadsRead {
     source: &'static str,
 }
 
-fn error_response(status: StatusCode, message: impl Into<String>) -> RouteError {
+pub(super) fn error_response(status: StatusCode, message: impl Into<String>) -> RouteError {
     (
         status,
         Json(serde_json::json!({ "error": message.into() })),
@@ -697,7 +697,7 @@ fn error_response(status: StatusCode, message: impl Into<String>) -> RouteError 
 }
 
 /// Returns an error response unless the central Dolt server answers.
-async fn ensure_dolt_online(dolt_manager: &DoltManager) -> Result<(), RouteError> {
+pub(super) async fn ensure_dolt_online(dolt_manager: &DoltManager) -> Result<(), RouteError> {
     if dolt_manager.is_available() || dolt_manager.check_server().await {
         return Ok(());
     }
@@ -708,7 +708,7 @@ async fn ensure_dolt_online(dolt_manager: &DoltManager) -> Result<(), RouteError
 }
 
 /// Validates a filesystem project path and returns its `.beads` directory.
-fn resolve_beads_dir(project_path: &Path) -> Result<PathBuf, RouteError> {
+pub(super) fn resolve_beads_dir(project_path: &Path) -> Result<PathBuf, RouteError> {
     // Security: Validate path is within allowed directories
     if let Err(e) = validate_path_security(project_path) {
         return Err(error_response(StatusCode::FORBIDDEN, e));
@@ -729,7 +729,7 @@ fn resolve_beads_dir(project_path: &Path) -> Result<PathBuf, RouteError> {
 /// Returns `(port, db_name)` when `.beads` points at a port that is actually
 /// listening and a beads database can be named for it. The TCP probe keeps a
 /// dead port file from costing a slow SQL timeout.
-async fn resolve_project_dolt(beads_dir: &Path, project_path: &Path) -> Option<(u16, String)> {
+pub(super) async fn resolve_project_dolt(beads_dir: &Path, project_path: &Path) -> Option<(u16, String)> {
     let port = resolve_dolt_port(beads_dir)?;
 
     let port_alive = tokio::time::timeout(
