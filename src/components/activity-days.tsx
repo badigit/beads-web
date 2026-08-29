@@ -28,26 +28,34 @@ function formatTime(iso: string): string {
 }
 
 /**
- * What kind of action a row is, shown as a mark instead of a word.
+ * What kind of action a row is, shown as colour and a mark instead of a word.
  *
- * A feed is scanned, not read: an icon with a colour lands in one glance, where
- * "created"/"updated"/"closed" spelled out on every line is a column of noise.
- * The word survives in the tooltip and the accessible name, so nothing is lost
- * for a screen reader or for a second look.
+ * A feed is scanned, not read: a tinted row with an icon lands in one glance,
+ * where "created"/"updated"/"closed" spelled out on every line is a column of
+ * noise. The word survives in the tooltip and the accessible name, so nothing
+ * is lost for a screen reader or for a second look.
+ *
+ * The two events worth spotting from across the room get the strong colours —
+ * new work is blue, finished work is green. Everything else stays neutral on
+ * purpose: if every kind is highlighted, none is.
  */
-const EVENT_MARKS: Record<string, { icon: LucideIcon; className: string }> = {
-  created: { icon: Plus, className: "text-success" },
-  closed: { icon: Check, className: "text-t-faint" },
-  reopened: { icon: RotateCcw, className: "text-warning" },
-  status_changed: { icon: ArrowRight, className: "text-info" },
-  claimed: { icon: UserCheck, className: "text-info" },
-  updated: { icon: Pencil, className: "text-t-muted" },
-  label_added: { icon: Tag, className: "text-t-muted" },
-  label_removed: { icon: Tag, className: "text-t-faint" },
-  comment_added: { icon: MessageSquare, className: "text-t-muted" },
+const EVENT_MARKS: Record<string, { icon: LucideIcon; icon_color: string; row: string }> = {
+  created: { icon: Plus, icon_color: "text-info", row: "bg-info/10 border-l-info" },
+  closed: { icon: Check, icon_color: "text-success", row: "bg-success/10 border-l-success" },
+  reopened: { icon: RotateCcw, icon_color: "text-warning", row: "bg-warning/10 border-l-warning" },
+  status_changed: { icon: ArrowRight, icon_color: "text-t-secondary", row: "border-l-b-strong" },
+  claimed: { icon: UserCheck, icon_color: "text-t-secondary", row: "border-l-b-strong" },
+  updated: { icon: Pencil, icon_color: "text-t-muted", row: "border-l-transparent" },
+  label_added: { icon: Tag, icon_color: "text-t-muted", row: "border-l-transparent" },
+  label_removed: { icon: Tag, icon_color: "text-t-faint", row: "border-l-transparent" },
+  comment_added: { icon: MessageSquare, icon_color: "text-t-muted", row: "border-l-transparent" },
 };
 
-const FALLBACK_MARK = { icon: Pencil, className: "text-t-faint" };
+const FALLBACK_MARK = {
+  icon: Pencil,
+  icon_color: "text-t-faint",
+  row: "border-l-transparent",
+};
 
 export interface ActivityDaysProps {
   events: ActivityEvent[];
@@ -83,43 +91,54 @@ function ActivityRow({
   const action = describeRun(run);
 
   return (
-    <li className="flex items-baseline gap-2 rounded px-2 py-1.5 text-sm hover:bg-surface-overlay/40">
-      <span className="w-10 shrink-0 font-mono text-[11px] tabular-nums text-t-faint">
+    <li
+      className={cn(
+        // The whole row carries the colour, not just the icon: a 14px glyph is
+        // not something you spot while scrolling a hundred events.
+        "flex items-start gap-2 rounded border-l-2 px-2 py-1.5 text-sm transition-colors hover:bg-surface-overlay/60",
+        mark.row
+      )}
+    >
+      <span className="w-10 shrink-0 pt-0.5 font-mono text-[11px] tabular-nums text-t-faint">
         {formatTime(run.created_at)}
       </span>
 
       <span
-        className={cn("flex w-4 shrink-0 justify-center self-center", mark.className)}
+        className={cn("flex w-4 shrink-0 justify-center pt-0.5", mark.icon_color)}
         title={action}
       >
-        <Icon className="size-3.5" aria-hidden="true" />
+        <Icon className="size-4" aria-hidden="true" />
         <span className="sr-only">{action}</span>
       </span>
 
-      {/* One event is one line: a close reason can run to a paragraph, and a
-          feed you scan must not reflow around it. */}
-      <div className="min-w-0 flex-1 truncate">
-        {folded ? (
-          <span className="font-mono text-xs text-t-faint" title={run.beadIds.join(", ")}>
-            <span className="tabular-nums text-t-muted">×{run.count}</span>{" "}
-            {run.beadIds.slice(0, 3).join(", ")}
-            {run.beadIds.length > 3 ? ", …" : ""}
-          </span>
-        ) : (
-          <button
-            type="button"
-            onClick={() => onBeadClick?.(run.issue_id, run.project_id)}
-            className="text-left text-t-primary underline-offset-2 hover:underline"
-          >
-            {title}
-          </button>
-        )}
-        {/* Project rides along in the line rather than owning a column: with
-            names of wildly different length a column is mostly empty space. */}
+      <div className="min-w-0 flex-1">
+        {/* One event is one line: a close reason can run to a paragraph, and a
+            feed you scan must not reflow around it. */}
+        <div className="truncate">
+          {folded ? (
+            <span className="font-mono text-xs text-t-faint" title={run.beadIds.join(", ")}>
+              <span className="tabular-nums text-t-muted">×{run.count}</span>{" "}
+              {run.beadIds.slice(0, 3).join(", ")}
+              {run.beadIds.length > 3 ? ", …" : ""}
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onBeadClick?.(run.issue_id, run.project_id)}
+              className="text-left text-t-primary underline-offset-2 hover:underline"
+            >
+              {title}
+            </button>
+          )}
+          {details && !folded && <span className="text-t-muted"> — {details}</span>}
+        </div>
+
+        {/* The project goes under the title: in a cross-project feed it is the
+            second thing you need, and on one line it competed with the title
+            for the same truncation budget. */}
         {showProject && run.project_name && (
-          <span className="text-xs text-t-faint"> · {run.project_name}</span>
+          <div className="truncate text-xs text-t-muted">{run.project_name}</div>
         )}
-        {details && !folded && <span className="text-t-muted"> — {details}</span>}
       </div>
     </li>
   );
