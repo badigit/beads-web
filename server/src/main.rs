@@ -192,6 +192,7 @@ async fn main() {
         .route("/api/beads/counts", get(routes::beads::read_bead_counts))
         .route("/api/beads/labels", get(routes::beads::read_bead_labels))
         .route("/api/activity", get(routes::activity::read_activity))
+        .route("/api/activity/all", get(routes::activity::read_all_activity))
         .route("/api/beads/create", post(routes::beads::create_bead_handler))
         .route("/api/beads/update", patch(routes::beads::update_bead_handler))
         // Global cross-project search

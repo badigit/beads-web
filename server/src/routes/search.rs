@@ -127,7 +127,7 @@ fn rank_and_truncate(query: &str, results: Vec<SearchResult>, limit: usize) -> V
 ///
 /// Projects are ordered by `last_opened DESC`, so if two registry entries point
 /// at the same database the most recently opened one wins.
-fn build_project_index(db: &Database) -> HashMap<String, (String, String)> {
+pub(super) fn build_project_index(db: &Database) -> HashMap<String, (String, String)> {
     let projects = match db.get_projects_filtered(true) {
         Ok(projects) => projects,
         Err(e) => {
