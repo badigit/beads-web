@@ -6,7 +6,7 @@ import Link from "next/link";
 
 
 
-import { Plus, Github, Filter, X, Archive, History, LayoutGrid, List, ArrowDownAZ, Clock, RefreshCw } from "lucide-react";
+import { Plus, Github, Filter, X, Archive, History, Table2, LayoutGrid, List, ArrowDownAZ, Clock, RefreshCw } from "lucide-react";
 
 import { AddProjectDialog } from "@/components/add-project-dialog";
 import { HomeBeadSearch } from "@/components/home-bead-search";
@@ -191,6 +191,12 @@ export default function ProjectsPage() {
                 className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
                 aria-hidden="true"
               />
+            </Button>
+            <Button variant="ghost" size="md" asChild>
+              <Link href="/beads" aria-label="All beads across all projects">
+                <Table2 className="h-4 w-4" aria-hidden="true" />
+                All beads
+              </Link>
             </Button>
             <Button variant="ghost" size="md" asChild>
               <Link href="/activity" aria-label="Activity across all projects">

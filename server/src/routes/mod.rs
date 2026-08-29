@@ -5,6 +5,7 @@
 
 pub mod activity;
 pub mod agents;
+pub mod all_beads;
 pub mod beads;
 pub mod cli;
 pub mod dolt;

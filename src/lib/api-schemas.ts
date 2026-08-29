@@ -91,6 +91,28 @@ export const ActivityResponseSchema = z.object({
   source: z.string().optional(),
 });
 
+/**
+ * Response of `GET /api/beads/all` — one page of the cross-project grid.
+ */
+export const AllBeadsResponseSchema = z.object({
+  beads: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      status: z.string(),
+      priority: z.number().nullish(),
+      issue_type: z.string().nullish(),
+      owner: z.string().nullish(),
+      created_at: z.string().nullish(),
+      updated_at: z.string().nullish(),
+      labels: z.array(z.string()),
+      project_id: z.string().nullish(),
+      project_name: z.string().nullish(),
+    })
+  ),
+  source: z.string().optional(),
+});
+
 export const PRChecksSchema = z.object({
   total: z.number(),
   passed: z.number(),

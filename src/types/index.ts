@@ -141,6 +141,27 @@ export interface Bead {
 }
 
 /**
+ * One row of the cross-project grid (`GET /api/beads/all`).
+ *
+ * Narrower than {@link Bead} on purpose: the grid shows a line per bead across
+ * every project, so the long text (description, design, notes) never crosses
+ * the wire. Open a row to get the full bead.
+ */
+export interface BeadRow {
+  id: string;
+  title: string;
+  status: string;
+  priority?: number | null;
+  issue_type?: string | null;
+  owner?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  labels: string[];
+  project_id?: string | null;
+  project_name?: string | null;
+}
+
+/**
  * One label of a project's vocabulary with the number of beads carrying it.
  *
  * Beads keeps no dictionary table beside the `(issue_id, label)` link table, so

@@ -3,8 +3,8 @@
  * Replaces Tauri invoke() calls with HTTP fetch to backend
  */
 
-import { ActivityResponseSchema, BeadCountsResponseSchema, BeadLabelsResponseSchema, BeadsResponseSchema, PRStatusSchema, WorktreeStatusSchema } from '@/lib/api-schemas';
-import type { Project, Tag, Bead, BeadCounts, LabelCount, ActivityEvent, WorktreeStatus, WorktreeEntry, PRStatus, PRFilesResponse, MemoryResponse, MemoryStats, MemoryEntry, Agent, AgentModel } from '@/types';
+import { ActivityResponseSchema, AllBeadsResponseSchema, BeadCountsResponseSchema, BeadLabelsResponseSchema, BeadsResponseSchema, PRStatusSchema, WorktreeStatusSchema } from '@/lib/api-schemas';
+import type { Project, Tag, Bead, BeadRow, BeadCounts, LabelCount, ActivityEvent, WorktreeStatus, WorktreeEntry, PRStatus, PRFilesResponse, MemoryResponse, MemoryStats, MemoryEntry, Agent, AgentModel } from '@/types';
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? '';
 
@@ -210,6 +210,29 @@ export const beads = {
     const params = new URLSearchParams({ path });
     const data = await fetchApi<BeadLabelsResponse>(`/api/beads/labels?${params}`);
     BeadLabelsResponseSchema.parse(data);
+    return data;
+  },
+
+  /**
+   * One page of the cross-project grid. Filters are applied by the backend —
+   * filtering after transfer would mean transferring what is thrown away.
+   */
+  all: async (options?: {
+    statuses?: string[];
+    priorities?: number[];
+    labels?: string[];
+    limit?: number;
+  }) => {
+    const params = new URLSearchParams();
+    if (options?.statuses?.length) params.set('status', options.statuses.join(','));
+    if (options?.priorities?.length) params.set('priority', options.priorities.join(','));
+    if (options?.labels?.length) params.set('label', options.labels.join(','));
+    if (options?.limit) params.set('limit', String(options.limit));
+    const query = params.toString();
+    const data = await fetchApi<{ beads: BeadRow[]; source?: string }>(
+      `/api/beads/all${query ? `?${query}` : ''}`
+    );
+    AllBeadsResponseSchema.parse(data);
     return data;
   },
 
