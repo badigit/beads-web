@@ -70,6 +70,25 @@ export const BeadLabelsResponseSchema = z.object({
   source: z.string().optional(),
 });
 
+/**
+ * Response of `GET /api/activity` — one page of the project's event log,
+ * newest first.
+ */
+export const ActivityResponseSchema = z.object({
+  events: z.array(
+    z.object({
+      id: z.string(),
+      issue_id: z.string(),
+      issue_title: z.string().nullish(),
+      event_type: z.string(),
+      actor: z.string(),
+      detail: z.string().nullish(),
+      created_at: z.string(),
+    })
+  ),
+  source: z.string().optional(),
+});
+
 export const PRChecksSchema = z.object({
   total: z.number(),
   passed: z.number(),

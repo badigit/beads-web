@@ -6,6 +6,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 
 import { ArrowLeft, EllipsisVertical, LayoutGrid, List } from "lucide-react";
 
+import { ActivityFeed } from "@/components/activity-feed";
 import { ActivityTimeline } from "@/components/activity-timeline";
 import { AgentsPanel } from "@/components/agents-panel";
 import { BeadDetail } from "@/components/bead-detail";
@@ -176,6 +177,9 @@ export default function KanbanBoard() {
 
   // Agents panel state
   const [isAgentsOpen, setIsAgentsOpen] = useState(false);
+
+  // Activity feed state
+  const [isActivityOpen, setIsActivityOpen] = useState(false);
 
   // Create bead dialog state
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -460,6 +464,9 @@ export default function KanbanBoard() {
           // Agents
           isAgentsOpen={isAgentsOpen}
           onAgentsToggle={() => setIsAgentsOpen((prev) => !prev)}
+          // Activity
+          isActivityOpen={isActivityOpen}
+          onActivityToggle={() => setIsActivityOpen((prev) => !prev)}
           // Filesystem features require a real project path
           hasProjectPath={!isDoltOnly}
           // Unknown status warning
@@ -562,6 +569,16 @@ export default function KanbanBoard() {
           projectPath={fsPath}
         />
       )}
+      </ErrorBoundary>
+
+      {/* Activity Feed (works for dolt-only projects too) */}
+      <ErrorBoundary label="Activity Feed">
+        <ActivityFeed
+          open={isActivityOpen}
+          onOpenChange={setIsActivityOpen}
+          projectPath={project?.path ?? ""}
+          onBeadClick={navigateToBead}
+        />
       </ErrorBoundary>
 
       {/* Project Settings Dialog */}

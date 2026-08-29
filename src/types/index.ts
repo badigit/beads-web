@@ -164,6 +164,25 @@ export interface Comment {
 }
 
 /**
+ * One row of the workspace activity feed (`GET /api/activity`).
+ *
+ * Folded server-side out of the `events` table: the raw `old_value` /
+ * `new_value` columns hold whole issue snapshots and never leave the backend —
+ * whatever is worth a line arrives in `detail`.
+ */
+export interface ActivityEvent {
+  id: string;
+  issue_id: string;
+  /** Title of the bead, or undefined when it no longer exists. */
+  issue_title?: string | null;
+  event_type: string;
+  actor: string;
+  /** New status, label name, close reason — whatever the event type carries. */
+  detail?: string | null;
+  created_at: string;
+}
+
+/**
  * Kanban column configuration
  */
 export interface KanbanColumn {

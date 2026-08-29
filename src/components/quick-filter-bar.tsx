@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 
-import { Search, X, ArrowUpDown, SlidersHorizontal, BrainCircuit, Bot, AlertTriangle, Plus, Check, Minus } from 'lucide-react';
+import { Search, X, ArrowUpDown, SlidersHorizontal, BrainCircuit, Bot, History, AlertTriangle, Plus, Check, Minus } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -86,6 +86,10 @@ interface QuickFilterBarProps {
   isAgentsOpen?: boolean;
   /** Callback to toggle agents panel */
   onAgentsToggle?: () => void;
+  /** Whether the activity feed is open */
+  isActivityOpen?: boolean;
+  /** Callback to toggle the activity feed */
+  onActivityToggle?: () => void;
   /** Whether the project has a filesystem path (not dolt-only) */
   hasProjectPath?: boolean;
   /** Count of beads with truly unknown statuses */
@@ -151,6 +155,8 @@ export function QuickFilterBar({
   onMemoryToggle,
   isAgentsOpen,
   onAgentsToggle,
+  isActivityOpen,
+  onActivityToggle,
   hasProjectPath = true,
   unknownStatusCount = 0,
   unknownStatusNames = [],
@@ -284,6 +290,25 @@ export function QuickFilterBar({
         >
           <Bot className="size-4" aria-hidden="true" />
           Agents
+        </button>
+      )}
+
+      {/* Activity Toggle — unlike Memory and Agents this needs no filesystem
+          path: the event log lives in the database itself. */}
+      {onActivityToggle && (
+        <button
+          type="button"
+          onClick={onActivityToggle}
+          aria-pressed={isActivityOpen}
+          className={cn(
+            'h-8 px-3 text-sm font-medium rounded-md transition-colors flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface-raised',
+            isActivityOpen
+              ? 'bg-info/20 text-info'
+              : 'bg-surface-overlay/50 text-t-tertiary hover:text-t-secondary'
+          )}
+        >
+          <History className="size-4" aria-hidden="true" />
+          Activity
         </button>
       )}
 
