@@ -1,10 +1,12 @@
 "use client";
 
 /**
- * Hook loading the project's activity feed page by page.
+ * Hooks loading an activity feed page by page.
  *
- * Paging is by timestamp rather than offset: the feed grows while it is being
- * read, and an offset would quietly skip or repeat rows as it shifts.
+ * Two feeds share one implementation: a single project's events and the
+ * cross-project feed merged from every beads database. Paging is by timestamp
+ * rather than offset — the feed grows while it is being read, and an offset
+ * would quietly skip or repeat rows as it shifts.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -28,11 +30,18 @@ export interface UseActivityResult {
   refresh: () => void;
 }
 
+/** Fetches one page; `before` walks backwards through the feed. */
+type PageFetcher = (options: { limit: number; before?: string }) => Promise<{
+  events: ActivityEvent[];
+}>;
+
 /**
- * @param projectPath project root or `dolt://<database>`; empty disables loading
- * @param enabled skip the request entirely while the feed is not on screen
+ * The paging machinery both feeds use.
+ *
+ * `key` identifies the feed: changing it (another project, or switching to the
+ * cross-project feed) restarts from the top instead of appending to a stale list.
  */
-export function useActivity(projectPath: string, enabled = true): UseActivityResult {
+function usePagedActivity(fetchPage: PageFetcher, key: string, enabled: boolean): UseActivityResult {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -43,19 +52,22 @@ export function useActivity(projectPath: string, enabled = true): UseActivityRes
   // Guards a second page request while one is in flight — scroll handlers fire
   // far more often than pages arrive.
   const loadingMoreRef = useRef(false);
+  // Kept in a ref so `loadMore` stays stable while the list grows.
+  const fetchRef = useRef(fetchPage);
+  fetchRef.current = fetchPage;
+  const eventsRef = useRef(events);
+  eventsRef.current = events;
 
   const refresh = useCallback(() => setReloadToken((n) => n + 1), []);
 
   useEffect(() => {
-    if (!projectPath || !enabled) {
-      return;
-    }
+    if (!key || !enabled) return;
 
     let cancelled = false;
     setIsLoading(true);
 
-    api.activity
-      .read(projectPath, { limit: PAGE_SIZE })
+    fetchRef
+      .current({ limit: PAGE_SIZE })
       .then((data) => {
         if (cancelled) return;
         setEvents(data.events);
@@ -75,20 +87,21 @@ export function useActivity(projectPath: string, enabled = true): UseActivityRes
     return () => {
       cancelled = true;
     };
-  }, [projectPath, enabled, reloadToken]);
+  }, [key, enabled, reloadToken]);
 
   const loadMore = useCallback(() => {
-    const oldest = events[events.length - 1];
-    if (!projectPath || !oldest || loadingMoreRef.current || !hasMore) return;
+    const current = eventsRef.current;
+    const oldest = current[current.length - 1];
+    if (!oldest || loadingMoreRef.current || !hasMore) return;
 
     loadingMoreRef.current = true;
     setIsLoadingMore(true);
 
-    api.activity
-      .read(projectPath, { limit: PAGE_SIZE, before: oldest.created_at })
+    fetchRef
+      .current({ limit: PAGE_SIZE, before: oldest.created_at })
       .then((data) => {
-        // Same timestamp on several events would re-deliver rows we already
-        // show; drop by id rather than trusting the boundary to be exact.
+        // Several events can share a timestamp, so the boundary alone would
+        // re-deliver rows we already show; drop by id instead.
         setEvents((prev) => {
           const seen = new Set(prev.map((event) => event.id));
           return [...prev, ...data.events.filter((event) => !seen.has(event.id))];
@@ -102,7 +115,34 @@ export function useActivity(projectPath: string, enabled = true): UseActivityRes
         loadingMoreRef.current = false;
         setIsLoadingMore(false);
       });
-  }, [projectPath, events, hasMore]);
+  }, [hasMore]);
 
   return { events, isLoading, isLoadingMore, error, hasMore, loadMore, refresh };
+}
+
+/**
+ * One project's feed.
+ *
+ * @param projectPath project root or `dolt://<database>`; empty disables loading
+ * @param enabled skip the request entirely while the feed is not on screen
+ */
+export function useActivity(projectPath: string, enabled = true): UseActivityResult {
+  const fetchPage = useCallback<PageFetcher>(
+    (options) => api.activity.read(projectPath, options),
+    [projectPath]
+  );
+
+  return usePagedActivity(fetchPage, projectPath, enabled);
+}
+
+/**
+ * The cross-project feed: every beads database merged into one timeline.
+ *
+ * This is the view that answers "what have I been working on" without opening
+ * thirty projects one at a time.
+ */
+export function useAllActivity(enabled = true): UseActivityResult {
+  const fetchPage = useCallback<PageFetcher>((options) => api.activity.all(options), []);
+
+  return usePagedActivity(fetchPage, "all", enabled);
 }

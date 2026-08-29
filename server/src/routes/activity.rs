@@ -15,9 +15,13 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use crate::db::Database;
+use super::search::build_project_index;
 
 use super::beads::{
     ensure_dolt_online, error_response, resolve_beads_dir, resolve_project_dolt, RouteError,
@@ -32,6 +36,10 @@ use crate::dolt::{self, DoltManager};
 const MAX_LIMIT: u32 = 500;
 /// Page size used when the caller does not ask for one.
 const DEFAULT_LIMIT: u32 = 100;
+
+/// How many databases are read concurrently when merging every project's feed.
+/// Matches the global search: the shared pool holds four connections.
+const MAX_CONCURRENCY: usize = 4;
 
 /// Longest `detail` string shipped to the client.
 ///
@@ -49,6 +57,17 @@ pub struct ActivityParams {
     /// Page backwards: only events strictly older than this ISO timestamp.
     pub before: Option<String>,
     /// Incremental refresh: only events strictly newer than this ISO timestamp.
+    pub since: Option<String>,
+}
+
+/// Query parameters for `GET /api/activity/all`.
+///
+/// Same paging as the per-project feed minus `path`: this endpoint spans every
+/// database, so demanding one project's path would make it unusable.
+#[derive(Debug, Deserialize)]
+pub struct AllActivityParams {
+    pub limit: Option<u32>,
+    pub before: Option<String>,
     pub since: Option<String>,
 }
 
@@ -71,6 +90,12 @@ pub struct ActivityEvent {
     /// close reason. `None` when the event type carries nothing worth a line.
     pub detail: Option<String>,
     pub created_at: String,
+    /// Which project the event belongs to. Only set by the cross-project feed —
+    /// inside one project the answer is already on screen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
 }
 
 /// Raw columns of one `events` row, before folding.
@@ -149,8 +174,27 @@ pub(crate) fn events_from_rows(rows: Vec<RawActivityRow>) -> Vec<ActivityEvent> 
             event_type: row.event_type,
             actor: row.actor,
             created_at: row.created_at,
+            project_id: None,
+            project_name: None,
         })
         .collect()
+}
+
+/// Merges per-database pages into one feed, newest first.
+///
+/// Each database is asked for its own newest page, so the merge has to sort
+/// again: "newest 100 overall" is not the concatenation of per-project pages.
+/// Sorting by `(created_at, id)` keeps the order stable when two projects
+/// record an event in the same second.
+pub(crate) fn merge_feeds(feeds: Vec<Vec<ActivityEvent>>, limit: usize) -> Vec<ActivityEvent> {
+    let mut merged: Vec<ActivityEvent> = feeds.into_iter().flatten().collect();
+    merged.sort_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| b.id.cmp(&a.id))
+    });
+    merged.truncate(limit);
+    merged
 }
 
 /// Normalizes a requested page size into the served one.
@@ -247,6 +291,103 @@ async fn resolve_activity(
     Ok((Vec::new(), "none"))
 }
 
+/// GET /api/activity/all?limit=&before=
+///
+/// The same feed across every beads database on the central server — the view
+/// that answers "what did I work on lately" without opening thirty projects one
+/// by one. Each row carries the project it belongs to.
+///
+/// Never fails hard: an unreachable server or a broken database yields a
+/// partial feed rather than an error status, exactly like the global search.
+pub async fn read_all_activity(
+    Extension(dolt_manager): Extension<Arc<DoltManager>>,
+    Extension(db): Extension<Arc<Database>>,
+    Query(params): Query<AllActivityParams>,
+) -> impl IntoResponse {
+    let limit = resolve_limit(params.limit);
+    let query = dolt::ActivityQuery {
+        limit,
+        before: params.before.clone(),
+        since: params.since.clone(),
+    };
+
+    if !dolt_manager.is_available() && !dolt_manager.check_server().await {
+        tracing::warn!("Cross-project activity skipped: Dolt server unavailable");
+        return Json(serde_json::json!({ "events": [], "source": "unavailable" }));
+    }
+
+    let databases = match dolt_manager.discover_databases().await {
+        Ok(databases) => databases,
+        Err(e) => {
+            tracing::error!(error = %e, "Cross-project activity: discovery failed");
+            return Json(serde_json::json!({ "events": [], "source": "unavailable" }));
+        }
+    };
+
+    let database_count = databases.len();
+    let names: Vec<String> = databases.into_iter().map(|entry| entry.name).collect();
+    let projects = build_project_index(&db);
+    let feeds = read_every_database(Arc::clone(&dolt_manager), names, query, &projects).await;
+    let read = feeds.len();
+    let events = merge_feeds(feeds, limit as usize);
+
+    tracing::info!(
+        databases = database_count,
+        databases_read = read,
+        events = events.len(),
+        "Cross-project activity"
+    );
+
+    Json(serde_json::json!({ "events": events, "source": "dolt-central" }))
+}
+
+/// Reads every database concurrently; a failing one is skipped, not fatal.
+async fn read_every_database(
+    dolt_manager: Arc<DoltManager>,
+    databases: Vec<String>,
+    query: dolt::ActivityQuery,
+    projects: &std::collections::HashMap<String, (String, String)>,
+) -> Vec<Vec<ActivityEvent>> {
+    stream::iter(databases.into_iter().map(|database| {
+        let dolt_manager = Arc::clone(&dolt_manager);
+        let query = query.clone();
+        let project = projects.get(&database).cloned();
+        async move {
+            match dolt_manager.read_activity(&database, &query).await {
+                Ok(rows) => {
+                    let (project_id, project_name) = match project {
+                        Some((id, name)) => (Some(id), Some(name)),
+                        // A database with no registry entry still belongs
+                        // somewhere: name it after itself rather than blank.
+                        None => (None, Some(database.clone())),
+                    };
+                    let events = events_from_rows(rows)
+                        .into_iter()
+                        .map(|event| ActivityEvent {
+                            project_id: project_id.clone(),
+                            project_name: project_name.clone(),
+                            ..event
+                        })
+                        .collect::<Vec<_>>();
+                    Some(events)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        database = %database,
+                        error = %e,
+                        "Cross-project activity: skipping database"
+                    );
+                    None
+                }
+            }
+        }
+    }))
+    .buffer_unordered(MAX_CONCURRENCY)
+    .filter_map(|feed| async move { feed })
+    .collect()
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,6 +468,70 @@ mod tests {
         assert!(!serialized.contains("new_value"));
         assert!(!serialized.contains("xxxx"));
         assert_eq!(events[0].detail, None);
+    }
+
+    fn feed_event(id: &str, created_at: &str, project: &str) -> ActivityEvent {
+        ActivityEvent {
+            id: id.to_string(),
+            issue_id: "bweb-1".to_string(),
+            issue_title: None,
+            event_type: "created".to_string(),
+            actor: "badigit".to_string(),
+            detail: None,
+            created_at: created_at.to_string(),
+            project_id: None,
+            project_name: Some(project.to_string()),
+        }
+    }
+
+    #[test]
+    fn merging_interleaves_projects_by_time() {
+        // Concatenating per-project pages would list one project's whole day
+        // before another's — the merge has to sort across them.
+        let merged = merge_feeds(
+            vec![
+                vec![
+                    feed_event("a", "2026-08-29T10:00:00Z", "beads-web"),
+                    feed_event("b", "2026-08-27T10:00:00Z", "beads-web"),
+                ],
+                vec![feed_event("c", "2026-08-28T10:00:00Z", "dimcoder")],
+            ],
+            10,
+        );
+
+        assert_eq!(
+            merged.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "c", "b"]
+        );
+    }
+
+    #[test]
+    fn merging_truncates_to_the_requested_page() {
+        let merged = merge_feeds(
+            vec![
+                vec![feed_event("a", "2026-08-29T10:00:00Z", "one")],
+                vec![feed_event("b", "2026-08-28T10:00:00Z", "two")],
+                vec![feed_event("c", "2026-08-27T10:00:00Z", "three")],
+            ],
+            2,
+        );
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].id, "a");
+    }
+
+    #[test]
+    fn same_second_events_keep_a_stable_order() {
+        let merged = merge_feeds(
+            vec![
+                vec![feed_event("a", "2026-08-29T10:00:00Z", "one")],
+                vec![feed_event("b", "2026-08-29T10:00:00Z", "two")],
+            ],
+            10,
+        );
+
+        assert_eq!(merged[0].id, "b");
+        assert_eq!(merged[1].id, "a");
     }
 
     #[test]

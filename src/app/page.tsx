@@ -2,9 +2,11 @@
 
 import { useMemo, useState } from "react";
 
+import Link from "next/link";
 
 
-import { Plus, Github, Filter, X, Archive, LayoutGrid, List, ArrowDownAZ, Clock, RefreshCw } from "lucide-react";
+
+import { Plus, Github, Filter, X, Archive, History, LayoutGrid, List, ArrowDownAZ, Clock, RefreshCw } from "lucide-react";
 
 import { AddProjectDialog } from "@/components/add-project-dialog";
 import { HomeBeadSearch } from "@/components/home-bead-search";
@@ -189,6 +191,12 @@ export default function ProjectsPage() {
                 className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
                 aria-hidden="true"
               />
+            </Button>
+            <Button variant="ghost" size="md" asChild>
+              <Link href="/activity" aria-label="Activity across all projects">
+                <History className="h-4 w-4" aria-hidden="true" />
+                Activity
+              </Link>
             </Button>
             <Button variant="mono" size="md" onClick={() => setIsAddDialogOpen(true)}>
               <Plus aria-hidden="true" />

@@ -254,6 +254,23 @@ export const activity = {
     ActivityResponseSchema.parse(data);
     return data;
   },
+
+  /**
+   * The same feed across every beads database, merged and newest first.
+   * Each event carries the project it belongs to.
+   */
+  all: async (options?: { limit?: number; before?: string; since?: string }) => {
+    const params = new URLSearchParams();
+    if (options?.limit) params.set('limit', String(options.limit));
+    if (options?.before) params.set('before', options.before);
+    if (options?.since) params.set('since', options.since);
+    const query = params.toString();
+    const data = await fetchApi<ActivityResponse>(
+      `/api/activity/all${query ? `?${query}` : ''}`
+    );
+    ActivityResponseSchema.parse(data);
+    return data;
+  },
 };
 
 /**

@@ -84,6 +84,8 @@ export const ActivityResponseSchema = z.object({
       actor: z.string(),
       detail: z.string().nullish(),
       created_at: z.string(),
+      project_id: z.string().nullish(),
+      project_name: z.string().nullish(),
     })
   ),
   source: z.string().optional(),

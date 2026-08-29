@@ -180,6 +180,9 @@ export interface ActivityEvent {
   /** New status, label name, close reason — whatever the event type carries. */
   detail?: string | null;
   created_at: string;
+  /** Set only by the cross-project feed: which project the event came from. */
+  project_id?: string | null;
+  project_name?: string | null;
 }
 
 /**
