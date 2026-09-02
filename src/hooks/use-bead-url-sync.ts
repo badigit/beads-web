@@ -68,6 +68,11 @@ export function useBeadUrlSync({
   // all look the same from here: "not in this project's bead list".
   useEffect(() => {
     if (urlBeadResolved) return;
+    // No project in the URL means the board is not showing a project at all —
+    // `/project?bead=<id>` is resolved to its project first (see BeadResolver),
+    // and marking the param resolved against the empty placeholder list would
+    // both toast a false "not found" and strip `?bead=` after the redirect.
+    if (!projectId) return;
     if (!beadsReady) return;
     if (beadIdParam) {
       const found = beads.find((b) => b.id === beadIdParam);
@@ -82,7 +87,7 @@ export function useBeadUrlSync({
       }
     }
     setResolvedParam(beadIdParam);
-  }, [urlBeadResolved, beadIdParam, beadsReady, beads, openBead]);
+  }, [urlBeadResolved, beadIdParam, beadsReady, beads, openBead, projectId]);
 
   // Keep the URL in sync with the open detail bead (`?bead=<id>` while open,
   // stripped when closed). Uses replaceState (via router.replace) so opening
