@@ -45,6 +45,7 @@ const BEAD: Bead = {
 interface HookProps {
   beads: Bead[];
   beadsReady: boolean;
+  projectId?: string | null;
 }
 
 /**
@@ -58,7 +59,7 @@ function setup(initial: HookProps) {
       const [detailBead, setDetailBead] = useState<Bead | null>(null);
       const openBead = useCallback((bead: Bead) => setDetailBead(bead), []);
       useBeadUrlSync({
-        projectId: PROJECT_ID,
+        projectId: props.projectId === undefined ? PROJECT_ID : props.projectId,
         beads: props.beads,
         beadsReady: props.beadsReady,
         detailBead,
@@ -168,5 +169,28 @@ describe('useBeadUrlSync — outbound sync', () => {
     act(() => result.current.closeDetail());
 
     expect(replace).toHaveBeenCalledWith(`/project?id=${PROJECT_ID}`, { scroll: false });
+  });
+});
+
+describe('useBeadUrlSync without a project in the URL', () => {
+  it('leaves the param untouched so the bead can be resolved to its project', () => {
+    // `/project?bead=<id>` has no `?id=`: BeadResolver looks the project up and
+    // redirects. Resolving the param here against the empty placeholder list
+    // would toast a false "not found" and strip the param off the redirect.
+    visit('/project?bead=bweb-1vr');
+    currentParams = new URLSearchParams('bead=bweb-1vr');
+
+    const { rerender } = setup({ beads: [], beadsReady: true, projectId: null });
+
+    expect(toast).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+
+    // The redirect lands: same param, now with a project — the bead opens.
+    visit('/project?id=p1&bead=bweb-1vr');
+    currentParams = new URLSearchParams('id=p1&bead=bweb-1vr');
+    rerender({ beads: [BEAD], beadsReady: true });
+
+    expect(toast).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
   });
 });

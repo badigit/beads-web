@@ -10,6 +10,7 @@ import { ActivityFeed } from "@/components/activity-feed";
 import { ActivityTimeline } from "@/components/activity-timeline";
 import { AgentsPanel } from "@/components/agents-panel";
 import { BeadDetail } from "@/components/bead-detail";
+import { BeadResolver } from "@/components/bead-resolver";
 import { BoardList } from "@/components/board-list";
 import { CommentList } from "@/components/comment-list";
 import { CreateBeadDialog } from "@/components/create-bead-dialog";
@@ -40,6 +41,7 @@ import { usePRSettings } from "@/hooks/use-pr-settings";
 import { useProject } from "@/hooks/use-project";
 import { useTheme } from "@/hooks/use-theme";
 import { useWorktreeStatuses } from "@/hooks/use-worktree-statuses";
+import { parseBeadIdParam } from "@/lib/bead-link";
 import { isBlocked } from "@/lib/bead-utils";
 import { getUnknownStatusBeads, getUnknownStatusNames } from "@/lib/beads-parser";
 import { isFlatSearchMode, selectBoardBeads, selectListBeads, type IssueTypeFilter } from "@/lib/board-beads";
@@ -108,6 +110,9 @@ export default function KanbanBoard() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const projectId = searchParams.get('id');
+  // A link may carry only the bead id (`/project?bead=<id>`): the project uuid
+  // is not derivable from a repo name, so hand-written links routinely omit it.
+  const bareBeadId = projectId ? null : parseBeadIdParam(searchParams);
 
   // Fetch project data from SQLite
   const {
@@ -303,7 +308,12 @@ export default function KanbanBoard() {
   // `beads` is only meaningful once the project resolved: until then the path
   // passed to useBeads is "", which yields an empty list with loading already
   // off — indistinguishable from "this bead doesn't exist" without this gate.
-  const beadsReady = !projectLoading && !beadsLoading;
+  // `project !== null` is part of the gate, not decoration: right after a
+  // redirect from `/project?bead=…` the new id is already in the URL while
+  // `useProject` still reports the previous "no project" state (not loading,
+  // project null, bead path ""), and without this the deep link would resolve
+  // against an empty list and toast a false "not found".
+  const beadsReady = project !== null && !projectLoading && !beadsLoading;
   useBeadUrlSync({ projectId, beads, beadsReady, detailBead, openBead });
 
   // Ref for search input (keyboard navigation)
@@ -327,12 +337,18 @@ export default function KanbanBoard() {
     isDetailOpen,
   });
 
-  // Redirect if no project ID
+  // Redirect if there is neither a project ID nor a bead to resolve one from
   useEffect(() => {
-    if (!projectId) {
+    if (!projectId && !bareBeadId) {
       router.replace("/");
     }
-  }, [projectId, router]);
+  }, [projectId, bareBeadId, router]);
+
+  // Bead id without a project uuid: resolve the owning project, then redirect
+  // to the canonical URL (bweb-vch).
+  if (!projectId && bareBeadId) {
+    return <BeadResolver beadId={bareBeadId} />;
+  }
 
   // Redirect state while no project ID
   if (!projectId) {
