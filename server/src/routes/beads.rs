@@ -186,6 +186,13 @@ pub struct Bead {
     /// `None` for beads deferred without a date (manual `bd undefer`).
     #[serde(default)]
     pub defer_until: Option<String>,
+    /// Срок из `bd update --due`. Колонка есть в схеме с самого начала, но до
+    /// bweb-717 не читалась ни здесь, ни в SQL-запросе.
+    #[serde(default)]
+    pub due_at: Option<String>,
+    /// Оценка в минутах (`bd update -e`).
+    #[serde(default)]
+    pub estimated_minutes: Option<i64>,
     #[serde(default)]
     pub comments: Option<Vec<Comment>>,
     #[serde(default, alias = "parent")]
@@ -1183,6 +1190,23 @@ pub struct UpdateBeadRequest {
     pub description: Option<String>,
     /// New status (optional)
     pub status: Option<String>,
+    /// Срок в форматах bd (`+1d`, `tomorrow`, `2026-01-15`); пустая строка
+    /// снимает срок. Разбор человеческого ввода остаётся за bd — повторять его
+    /// в SQL-ветке значило бы держать вторую реализацию тех же форматов.
+    pub due: Option<String>,
+    /// Отложить до даты, те же форматы; пустая строка снимает отсрочку.
+    pub defer: Option<String>,
+    /// Оценка в минутах; `0` снимает оценку.
+    pub estimate: Option<i64>,
+}
+
+/// Поля, которые умеет только путь через bd CLI.
+///
+/// Для `dolt://`-проекта bd недоступен: папки нет, а повторять его разбор
+/// `+1d` / `tomorrow` на стороне сервера — это вторая реализация формата,
+/// которая разойдётся с первой на ближайшем релизе bd (bweb-717).
+fn cli_only_fields(req: &UpdateBeadRequest) -> bool {
+    req.due.is_some() || req.defer.is_some() || req.estimate.is_some()
 }
 
 /// PATCH /api/beads/update
@@ -1200,7 +1224,10 @@ pub async fn update_bead_handler(
         );
     }
 
-    let has_changes = req.title.is_some() || req.description.is_some() || req.status.is_some();
+    let has_changes = req.title.is_some()
+        || req.description.is_some()
+        || req.status.is_some()
+        || cli_only_fields(&req);
     if !has_changes {
         return (
             StatusCode::BAD_REQUEST,
@@ -1210,6 +1237,15 @@ pub async fn update_bead_handler(
 
     // Dolt-only path: update via SQL
     if let Some(db_name) = req.path.strip_prefix(DOLT_PATH_PREFIX) {
+        if cli_only_fields(&req) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "Due date, defer date and estimate can only be edited in a project with a local folder — bd CLI parses those formats"
+                })),
+            );
+        }
+
         if !dolt_manager.is_available() && !dolt_manager.check_server().await {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -1252,6 +1288,17 @@ pub async fn update_bead_handler(
     }
     if let Some(ref s) = req.status {
         args.push(format!("--status={}", s));
+    }
+    // Пустая строка здесь не «нечего менять», а «снять значение»: ровно так её
+    // понимает сам bd (`--due ""`).
+    if let Some(ref due) = req.due {
+        args.push(format!("--due={}", due));
+    }
+    if let Some(ref defer) = req.defer {
+        args.push(format!("--defer={}", defer));
+    }
+    if let Some(estimate) = req.estimate {
+        args.push(format!("--estimate={}", estimate));
     }
 
     let result = tokio::time::timeout(
@@ -1850,6 +1897,8 @@ mod tests {
             closed_at: None,
             close_reason: None,
             defer_until: None,
+            due_at: None,
+            estimated_minutes: None,
             comments: None,
             parent_id: None,
             children: None,
@@ -2075,6 +2124,8 @@ mod tests {
             closed_at: None,
             close_reason: None,
             defer_until: None,
+            due_at: None,
+            estimated_minutes: None,
             comments: None,
             parent_id: None,
             children: None,

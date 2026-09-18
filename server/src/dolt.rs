@@ -883,13 +883,25 @@ async fn has_column(
 
 /// Queries issues from a Dolt database.
 async fn query_issues(conn: &mut mysql_async::Conn, db_name: &str) -> Result<Vec<Bead>, DoltError> {
-    // `defer_until` arrived with a later bd schema; older databases don't have
-    // it, so select a NULL placeholder there and keep a single row-mapping path.
+    // `defer_until`, `due_at` и `estimated_minutes` появились в поздних схемах
+    // bd; в старой базе их нет, поэтому вместо колонки подставляется NULL и
+    // разбор строки остаётся одним и тем же для любой схемы.
     let defer_until_select = if has_column(conn, db_name, "issues", "defer_until").await {
         "DATE_FORMAT(defer_until, '%Y-%m-%dT%H:%i:%sZ') AS defer_until"
     } else {
         "NULL AS defer_until"
     };
+    let due_at_select = if has_column(conn, db_name, "issues", "due_at").await {
+        "DATE_FORMAT(due_at, '%Y-%m-%dT%H:%i:%sZ') AS due_at"
+    } else {
+        "NULL AS due_at"
+    };
+    let estimated_minutes_select =
+        if has_column(conn, db_name, "issues", "estimated_minutes").await {
+            "estimated_minutes"
+        } else {
+            "NULL AS estimated_minutes"
+        };
     let query = format!(
         "SELECT id, title, description, `design`, status, priority, issue_type, \
          owner, assignee, \
@@ -897,7 +909,7 @@ async fn query_issues(conn: &mut mysql_async::Conn, db_name: &str) -> Result<Vec
          created_by, \
          DATE_FORMAT(updated_at, '%Y-%m-%dT%H:%i:%sZ') AS updated_at, \
          DATE_FORMAT(closed_at, '%Y-%m-%dT%H:%i:%sZ') AS closed_at, \
-         close_reason, {defer_until_select} \
+         close_reason, {defer_until_select}, {due_at_select}, {estimated_minutes_select} \
          FROM `{db_name}`.issues"
     );
     let rows: Vec<Row> = conn
@@ -921,6 +933,8 @@ async fn query_issues(conn: &mut mysql_async::Conn, db_name: &str) -> Result<Vec
             closed_at: get_opt_str(row, "closed_at"),
             close_reason: get_opt_str(row, "close_reason"),
             defer_until: get_opt_str(row, "defer_until"),
+            due_at: get_opt_str(row, "due_at"),
+            estimated_minutes: row.get::<Option<i64>, _>("estimated_minutes").flatten(),
             design_doc: get_opt_str(row, "design"),
             parent_id: None,
             children: None,

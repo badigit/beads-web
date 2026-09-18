@@ -241,7 +241,23 @@ export const beads = {
     body: JSON.stringify(data),
   }),
 
-  update: (data: { path: string; id: string; title?: string; description?: string; status?: string }) =>
+  /**
+   * Правка полей бида.
+   *
+   * `due` и `defer` уходят в bd в его форматах (`+1d`, `tomorrow`, ISO); пустая
+   * строка снимает значение. `estimate` — минуты, ноль снимает оценку. Эти три
+   * поля требуют проекта с локальной папкой: в `dolt://` их парсить некому.
+   */
+  update: (data: {
+    path: string;
+    id: string;
+    title?: string;
+    description?: string;
+    status?: string;
+    due?: string;
+    defer?: string;
+    estimate?: number;
+  }) =>
     fetchApi<{ success: boolean }>('/api/beads/update', {
       method: 'PATCH',
       body: JSON.stringify(data),
