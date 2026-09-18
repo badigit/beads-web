@@ -94,7 +94,7 @@ describe('ScheduleFields', () => {
     );
   });
 
-  it('оценка уходит числом, пустая строка — нулём', async () => {
+  it('оценка уходит числом, пустое поле — нулём', async () => {
     render(<ScheduleFields bead={bead()} projectPath="C:/repo" />);
 
     fireEvent.click(screen.getByRole('button', { name: '+ оценка' }));
@@ -103,6 +103,30 @@ describe('ScheduleFields', () => {
     await waitFor(() =>
       expect(update).toHaveBeenCalledWith({ path: 'C:/repo', id: 'bweb-1', estimate: 0 })
     );
+  });
+
+  it('нечисловая оценка не уходит в bd и не стирает прежнюю', async () => {
+    render(<ScheduleFields bead={bead({ estimated_minutes: 90 })} projectPath="C:/repo" />);
+
+    fireEvent.click(screen.getByRole('button', { name: '1 ч 30 мин' }));
+    fireEvent.change(screen.getByLabelText(/минуты/), { target: { value: '90m' } });
+    fireEvent.keyDown(screen.getByLabelText(/минуты/), { key: 'Enter' });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/целое число/);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('уход фокусом с пустого поля отменяет правку, а не стирает дату', async () => {
+    render(
+      <ScheduleFields bead={bead({ due_at: '2026-09-20T00:00:00Z' })} projectPath="C:/repo" />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /2026|Sep|сен/i }));
+    fireEvent.blur(screen.getByLabelText(/tomorrow/));
+
+    // Один клик мимо не должен снимать уже проставленный срок.
+    expect(update).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /2026|Sep|сен/i })).toBeInTheDocument();
   });
 
   it('ошибка сохранения видна рядом с полем', async () => {

@@ -52,9 +52,24 @@ export function ScheduleFields({ bead, projectPath, readOnly, onUpdated }: Sched
     setError(null);
   };
 
-  const save = async (field: ScheduleField) => {
+  const save = async (field: ScheduleField, reason: "enter" | "blur") => {
     if (!projectPath) return;
     const raw = draft.trim();
+
+    // Снятие значения — только явным действием. Уход фокусом с пустого поля
+    // это отмена: иначе один клик мимо стирал бы уже проставленный срок.
+    if (raw === "" && reason === "blur") {
+      setEditing(null);
+      setError(null);
+      return;
+    }
+
+    // Пустое поле по Enter — это снятие: у оценки снятие и есть ноль.
+    if (field === "estimate" && raw !== "" && !isValidEstimate(raw)) {
+      setError("Оценка — целое число минут, 0 снимает её");
+      return;
+    }
+
     setSaving(true);
     try {
       await api.beads.update({
@@ -63,7 +78,7 @@ export function ScheduleFields({ bead, projectPath, readOnly, onUpdated }: Sched
         // Пустая строка — это «снять значение», ровно так её понимает bd.
         // У оценки снятия нет: `--estimate 0` записывает ноль, а не NULL,
         // поэтому ноль и считается «оценки нет» на показе (проверено на bd 1.1.0).
-        ...(field === "estimate" ? { estimate: Number(raw) || 0 } : { [field]: raw }),
+        ...(field === "estimate" ? { estimate: raw === "" ? 0 : Number(raw) } : { [field]: raw }),
       });
       setEditing(null);
       setError(null);
@@ -92,7 +107,7 @@ export function ScheduleFields({ bead, projectPath, readOnly, onUpdated }: Sched
               value={draft}
               disabled={saving}
               onChange={setDraft}
-              onSubmit={() => void save(key)}
+              onSubmit={(reason) => void save(key, reason)}
               onCancel={() => setEditing(null)}
             />
           ) : (
@@ -121,7 +136,7 @@ export function ScheduleFields({ bead, projectPath, readOnly, onUpdated }: Sched
               value={draft}
               disabled={saving}
               onChange={setDraft}
-              onSubmit={() => void save(key)}
+              onSubmit={(reason) => void save(key, reason)}
               onCancel={() => setEditing(null)}
             />
           </div>
@@ -166,7 +181,7 @@ function ScheduleInput({
   value: string;
   disabled: boolean;
   onChange: (value: string) => void;
-  onSubmit: () => void;
+  onSubmit: (reason: "enter" | "blur") => void;
   onCancel: () => void;
 }) {
   return (
@@ -177,17 +192,28 @@ function ScheduleInput({
       value={value}
       disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
-      onBlur={onSubmit}
+      onBlur={() => onSubmit("blur")}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
           e.preventDefault();
-          onSubmit();
+          onSubmit("enter");
         }
         if (e.key === "Escape") onCancel();
       }}
       className="min-w-0 flex-1 rounded border border-b-default bg-surface-base px-1.5 py-0.5 text-sm text-t-primary focus:outline-none focus:ring-1 focus:ring-accent"
     />
   );
+}
+
+/**
+ * Оценка задаётся целым числом минут; ноль допустим — он снимает оценку.
+ *
+ * Без этой проверки `90m` или `abc` превращались в `Number(...) || 0`, то есть
+ * опечатка молча стирала существующую оценку (находка ревью).
+ */
+function isValidEstimate(raw: string): boolean {
+  if (!/^\d+$/.test(raw)) return false;
+  return Number.isSafeInteger(Number(raw));
 }
 
 /** Что показывать в строке поля; `null` — поля нет. */
