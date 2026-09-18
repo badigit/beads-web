@@ -418,7 +418,7 @@ impl DoltManager {
             mysql_async::params! {
                 "id" => id,
                 "title" => title,
-                "desc" => description,
+                "desc" => text_or_empty(description),
                 "priority" => priority,
                 "type" => issue_type,
                 "now" => &now,
@@ -608,6 +608,18 @@ pub struct SearchRow {
 /// caller-supplied names is deliberate — the split version rejected `-` on the
 /// `read_beads` / `issue_prefix` paths while allowing it on the search path,
 /// which broke those paths for hyphenated databases (bweb-489.14).
+/// Пустая строка вместо отсутствующего значения для текстовой колонки.
+///
+/// В схеме v53 `issues.description`, `title`, `design` и `notes` объявлены
+/// NOT NULL без DEFAULT, и `Option::None` уезжает в базу как NULL — Dolt отвечает
+/// `column name description is non-nullable but attempted to set a value of null`
+/// (bweb-qkh). Автозаполнение пустыми строками по `information_schema` в
+/// `create_bead` до этой колонки не доходит: она намеренно исключена из запроса
+/// схемы, потому что значение для неё подставляет вызывающая сторона.
+fn text_or_empty(value: Option<&str>) -> &str {
+    value.unwrap_or("")
+}
+
 fn validate_database_name(db_name: &str) -> Result<(), DoltError> {
     if db_name.is_empty()
         || !db_name
@@ -1779,6 +1791,21 @@ pub fn index_local_projects(roots: &[PathBuf], max_depth: usize) -> HashMap<Stri
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// Бид без описания раньше уходил в INSERT как NULL и падал на NOT NULL
+    /// колонке схемы v53 (bweb-qkh).
+    #[test]
+    fn missing_text_becomes_an_empty_string() {
+        assert_eq!(text_or_empty(None), "");
+    }
+
+    #[test]
+    fn present_text_is_passed_through_unchanged() {
+        assert_eq!(text_or_empty(Some("описание")), "описание");
+        // Пустая строка от вызывающей стороны неотличима от отсутствия — и это
+        // верно: в базе обе дают одно и то же значение.
+        assert_eq!(text_or_empty(Some("")), "");
+    }
 
     /// Тот же инвариант, что закреплён для `PasswordResolution` в `config.rs`:
     /// производный `Debug` напечатал бы пароль целиком, а
