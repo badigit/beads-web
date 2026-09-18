@@ -1294,18 +1294,26 @@ async fn origin_head_ref(repo_path: &str) -> Option<String> {
     let reference = String::from_utf8_lossy(&output.stdout).trim().to_string();
     // Без слэша это не remote-tracking ref, а что-то неожиданное: лучше уйти в
     // фолбэк, чем отрезать ветку от непонятного ревизионного выражения.
-    (reference.contains('/')).then_some(reference)
+    if !reference.contains('/') {
+        return None;
+    }
+
+    // `origin/HEAD` переживает удаление и переименование ветки, на которую
+    // указывает: symbolic-ref при этом отвечает успехом, а самого ref'а уже
+    // нет. Без этой проверки висячий указатель уводил бы в отказ и создание
+    // worktree, и rebase — при живой локальной ветке в фолбэке.
+    rev_exists(repo_path, &reference).await.then_some(reference)
 }
 
-/// Есть ли такая ветка в репозитории.
+/// Есть ли такая локальная ветка в репозитории.
 async fn branch_exists(repo_path: &str, branch: &str) -> bool {
+    rev_exists(repo_path, &format!("refs/heads/{branch}")).await
+}
+
+/// Резолвится ли ревизия в этом репозитории.
+async fn rev_exists(repo_path: &str, rev: &str) -> bool {
     hidden_command("git")
-        .args([
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{branch}"),
-        ])
+        .args(["rev-parse", "--verify", "--quiet", rev])
         .current_dir(repo_path)
         .output()
         .await
@@ -1929,6 +1937,26 @@ mod tests {
             .output()
             .unwrap();
         assert!(resolved.status.success(), "git не понял базу {base}");
+    }
+
+    #[tokio::test]
+    async fn dangling_origin_head_falls_back_to_a_local_branch() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        init_repo(repo);
+        git_in(repo, &["branch", "main"]);
+        // Указатель есть, ветки, на которую он смотрит, уже нет: git отвечает
+        // на symbolic-ref успехом, а commit-ish не резолвится.
+        git_in(
+            repo,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/badigit-main",
+            ],
+        );
+
+        assert_eq!(resolve_base_branch(&repo.to_string_lossy()).await, "main");
     }
 
     #[tokio::test]
