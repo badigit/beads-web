@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import {
   Calendar,
   Circle,
@@ -72,15 +73,8 @@ export function BeadDetail({
   onCleanup,
   onUpdate,
 }: BeadDetailProps) {
-  // Close on Escape key
-  useEffect(() => {
-    if (!open) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onOpenChange(false);
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, onOpenChange]);
+  // Escape, клик по подложке, focus trap и возврат фокуса на триггер — всё это
+  // держит Radix Dialog (bweb-afx). Своего обработчика клавиш здесь больше нет.
 
   const { settings: prSettings } = usePRSettings();
   const prEnabled = prSettings.enabled;
@@ -206,30 +200,32 @@ export function BeadDetail({
   }, [isDesignDocFullScreen]);
 
   return (
-    <>
-      {/* Overlay */}
-      {open && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80"
-          onClick={() => onOpenChange(false)}
-        />
-      )}
-      {/* Slide-in panel */}
-      <div
-        className={cn(
-          "fixed inset-y-0 right-0 z-50 w-full sm:max-w-lg md:max-w-2xl lg:max-w-3xl xl:max-w-[50vw] overflow-y-auto bg-surface-base border-l border-b-default p-6 shadow-lg transition-transform duration-300 ease-in-out",
-          open ? "translate-x-0" : "translate-x-full",
-          isDesignDocFullScreen && "invisible"
-        )}
-      >
+    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/80" />
+        {/* Slide-in panel. Кнопки Close здесь намеренно нет: шапка панели
+            компактная, а закрытие идёт подложкой и Escape (bweb-f6q). */}
+        <DialogPrimitive.Content
+          // Описания у панели нет — без этого Radix пишет предупреждение в
+          // консоль на каждое открытие.
+          aria-describedby={undefined}
+          // Radix модальность объявляет иначе: он прячет остальное дерево через
+          // aria-hidden и сам aria-modal не ставит. Атрибут добавлен явно —
+          // на него опираются автоматические проверки доступности (bweb-afx).
+          aria-modal="true"
+          className={cn(
+            "fixed inset-y-0 right-0 z-50 w-full sm:max-w-lg md:max-w-2xl lg:max-w-3xl xl:max-w-[50vw] overflow-y-auto bg-surface-base border-l border-b-default p-6 shadow-lg focus:outline-none",
+            isDesignDocFullScreen && "invisible"
+          )}
+        >
           <div className="space-y-2">
-            <h2 className="text-xl font-semibold leading-tight text-t-primary">
+            <DialogPrimitive.Title className="text-xl font-semibold leading-tight text-t-primary">
               <EditableField
                 value={bead.title}
                 onSave={handleSaveTitle}
                 disabled={isReadOnly}
               />
-            </h2>
+            </DialogPrimitive.Title>
 
             <p className="text-xs font-mono text-t-muted">
               {/* Whole badge is one copy target for the bead id; the ticket
@@ -458,7 +454,8 @@ export function BeadDetail({
 
           {/* Children slot for comments + timeline */}
           {children && <div className="mt-6">{children}</div>}
-      </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
 
       {/* Add Subtask Dialog (for epics) */}
       {projectPath && isEpic && (
@@ -470,6 +467,6 @@ export function BeadDetail({
           parentId={bead.id}
         />
       )}
-    </>
+    </DialogPrimitive.Root>
   );
 }
