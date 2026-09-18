@@ -353,7 +353,7 @@ export default function KanbanBoard() {
   // Redirect state while no project ID
   if (!projectId) {
     return (
-      <div className="flex min-h-dvh items-center justify-center bg-surface-base">
+      <div className="flex page-shell items-center justify-center bg-surface-base">
         <p className="text-t-muted">Redirecting…</p>
       </div>
     );
@@ -362,7 +362,7 @@ export default function KanbanBoard() {
   // Show loading state
   if (projectLoading) {
     return (
-      <div className="flex items-center justify-center min-h-dvh bg-surface-base">
+      <div className="flex items-center justify-center page-shell bg-surface-base">
         <div role="status" className="text-t-muted">Loading project…</div>
       </div>
     );
@@ -371,7 +371,7 @@ export default function KanbanBoard() {
   // Show project error state
   if (projectError) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-dvh bg-surface-base gap-4">
+      <div className="flex flex-col items-center justify-center page-shell bg-surface-base gap-4">
         <div role="alert" className="text-danger">Error: {projectError.message}</div>
         <Button variant="outline" asChild>
           <a href="/">Back to projects</a>
@@ -383,7 +383,7 @@ export default function KanbanBoard() {
   // Project not found
   if (!project) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-dvh bg-surface-base gap-4">
+      <div className="flex flex-col items-center justify-center page-shell bg-surface-base gap-4">
         <div className="text-t-muted">Project not found</div>
         <Button variant="outline" asChild>
           <a href="/">Back to projects</a>
@@ -393,7 +393,7 @@ export default function KanbanBoard() {
   }
 
   return (
-    <div className="min-h-dvh bg-surface-base flex flex-col">
+    <div className="page-shell bg-surface-base flex flex-col">
       {/* Header — terminal variant for neo-brutalist, standard otherwise */}
       {theme.headerVariant === 'terminal' ? (
         <div className="flex items-center justify-between px-6 py-4 terminal-header">

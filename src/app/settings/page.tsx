@@ -69,7 +69,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="min-h-dvh bg-surface-base">
+    <div className="page-shell bg-surface-base">
       {/* Header */}
       <header className="sticky top-0 z-30 border-b border-b-default bg-surface-base/80 backdrop-blur-sm px-6 py-4">
         <div className="flex items-center gap-4">
