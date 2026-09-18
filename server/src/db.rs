@@ -429,6 +429,23 @@ impl Database {
         Ok(names)
     }
 
+    /// То же, но с датой: список показывается пользователю, и без даты
+    /// непонятно, старое это удаление или вчерашнее (bweb-1ih).
+    pub fn ignored_databases_detailed(&self) -> Result<Vec<IgnoredDatabase>, DbError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT db_name, ignored_at FROM ignored_databases ORDER BY ignored_at DESC")?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(IgnoredDatabase {
+                    db_name: row.get(0)?,
+                    ignored_at: row.get(1)?,
+                })
+            })?
+            .collect::<SqliteResult<Vec<IgnoredDatabase>>>()?;
+        Ok(rows)
+    }
+
     /// Запоминает имена как удалённые. Повторная запись — не ошибка.
     pub fn ignore_databases(&self, names: &[String]) -> Result<(), DbError> {
         let conn = self.conn.lock().unwrap();
@@ -719,6 +736,15 @@ impl Database {
     }
 }
 
+/// Строка таблицы `ignored_databases` целиком.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IgnoredDatabase {
+    pub db_name: String,
+    /// RFC 3339, как его пишет `ignore_databases`.
+    pub ignored_at: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -736,6 +762,23 @@ mod tests {
         let mut names = db.ignored_databases().unwrap();
         names.sort();
         assert_eq!(names, vec!["mcpproxy".to_string(), "sbc".to_string()]);
+    }
+
+    #[test]
+    fn ignored_databases_detailed_carries_the_date() {
+        let db = Database::new_in_memory().unwrap();
+        db.ignore_databases(&["zzzprobe".to_string()]).unwrap();
+
+        let rows = db.ignored_databases_detailed().unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].db_name, "zzzprobe");
+        // Дата пишется в RFC 3339 — её и показывает интерфейс.
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(&rows[0].ignored_at).is_ok(),
+            "ignored_at не разбирается как RFC 3339: {}",
+            rows[0].ignored_at
+        );
     }
 
     #[test]

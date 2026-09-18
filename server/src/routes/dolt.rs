@@ -96,6 +96,44 @@ pub async fn ignore_databases(
     }
 }
 
+/// GET /api/dolt/ignored
+///
+/// Список баз, которые автосинк не заводит: их удалили из реестра руками.
+/// Без показа удалённый проект исчезал бесследно, и понять, почему автосинк
+/// не возвращает его обратно, можно было только прямым SQL по settings.db
+/// (bweb-1ih).
+pub async fn list_ignored_databases(
+    Extension(db): Extension<Arc<Database>>,
+) -> impl IntoResponse {
+    match db.ignored_databases_detailed() {
+        Ok(ignored) => (
+            axum::http::StatusCode::OK,
+            Json(serde_json::json!({ "ignored": ignored })),
+        ),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+/// DELETE /api/dolt/ignored/:name
+///
+/// Снимает игнор с одного имени. Сама база при этом не заводится: её подхватит
+/// ближайший проход автосинка — тот же, что заводит все остальные.
+pub async fn unignore_database(
+    Extension(db): Extension<Arc<Database>>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    match db.unignore_databases(&[name]) {
+        Ok(()) => (axum::http::StatusCode::NO_CONTENT, Json(serde_json::json!({}))),
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
 /// A discovered running Dolt server process.
 #[derive(Debug, Serialize)]
 pub struct DoltServer {

@@ -206,7 +206,14 @@ async fn main() {
             "/api/dolt/sync-projects",
             post(routes::dolt::sync_projects),
         )
-        .route("/api/dolt/ignored", post(routes::dolt::ignore_databases))
+        .route(
+            "/api/dolt/ignored",
+            get(routes::dolt::list_ignored_databases).post(routes::dolt::ignore_databases),
+        )
+        .route(
+            "/api/dolt/ignored/:name",
+            delete(routes::dolt::unignore_database),
+        )
         .route("/api/dolt/watch", get(routes::dolt_watch::watch_dolt))
         .route("/api/fs/list", get(routes::fs::list_directory))
         .route("/api/fs/exists", get(routes::fs::path_exists))

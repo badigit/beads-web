@@ -574,6 +574,15 @@ export interface DoltServer {
 }
 
 /**
+ * База, которую автосинк не заводит: её проект удалили из реестра руками.
+ */
+export interface IgnoredDatabase {
+  dbName: string;
+  /** RFC 3339 */
+  ignoredAt: string;
+}
+
+/**
  * Dolt API
  */
 export const dolt = {
@@ -593,6 +602,18 @@ export const dolt = {
     fetchApi<{ ignored: number }>('/api/dolt/ignored', {
       method: 'POST',
       body: JSON.stringify({ names }),
+    }),
+  /** Скрытые базы: что именно автосинк обходит стороной и с какого числа. */
+  ignored: () => fetchApi<{ ignored: IgnoredDatabase[] }>('/api/dolt/ignored'),
+  /**
+   * Снимает игнор с одного имени.
+   *
+   * Проект появится не сразу: его заведёт ближайший проход автосинка — тот же,
+   * что заводит все остальные базы.
+   */
+  unignore: (name: string) =>
+    fetchApi<void>(`/api/dolt/ignored/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
     }),
 };
 
