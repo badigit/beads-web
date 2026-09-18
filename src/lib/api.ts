@@ -406,10 +406,21 @@ export const git = {
     return data;
   },
 
-  createWorktree: (repoPath: string, beadId: string, baseBranch = 'main') =>
+  /**
+   * Создаёт worktree под бид.
+   *
+   * `baseBranch` не задан — поле не уезжает вовсе, и базу выбирает сервер по
+   * `origin/HEAD`. Раньше здесь стоял литерал `'main'`, и ветка резалась от
+   * него даже в репозитории, где живая линия называется иначе (bweb-cod).
+   */
+  createWorktree: (repoPath: string, beadId: string, baseBranch?: string) =>
     fetchApi<CreateWorktreeResponse>('/api/git/worktree', {
       method: 'POST',
-      body: JSON.stringify({ repo_path: repoPath, bead_id: beadId, base_branch: baseBranch }),
+      body: JSON.stringify({
+        repo_path: repoPath,
+        bead_id: beadId,
+        ...(baseBranch ? { base_branch: baseBranch } : {}),
+      }),
     }),
 
   deleteWorktree: (repoPath: string, beadId: string) =>
@@ -657,7 +668,7 @@ export const update = {
 export interface SpawnSessionInput {
   project_path: string;
   bead_id: string;
-  /** Base branch for a freshly created worktree (server default: `main`) */
+  /** Base branch for a freshly created worktree (не задана — сервер берёт `origin/HEAD`) */
   base_branch?: string;
 }
 
