@@ -59,6 +59,9 @@ describe('IgnoredDatabasesPanel', () => {
     render(<IgnoredDatabasesPanel />);
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Dolt server not running');
+    // Список в этом случае неизвестен, и утверждать «скрытых баз нет» нельзя:
+    // пользователь принял бы отказ сервера за факт.
+    expect(screen.queryByText(/скрытых баз нет/i)).not.toBeInTheDocument();
   });
 
   it('провал возврата не оставляет кнопку заблокированной', async () => {

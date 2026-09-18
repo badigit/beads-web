@@ -25,8 +25,9 @@ export function IgnoredDatabasesPanel() {
       setEntries(ignored);
       setError(null);
     } catch (e) {
+      // Список остаётся неизвестным: подставить сюда пустой массив значило бы
+      // сказать «скрытых баз нет» там, где мы просто не смогли спросить.
       setError(e instanceof Error ? e.message : "Failed to load hidden databases");
-      setEntries([]);
     }
   }, []);
 
@@ -51,7 +52,13 @@ export function IgnoredDatabasesPanel() {
   if (entries === null) {
     return (
       <div className="rounded-lg border border-b-default bg-surface-raised/50 p-4">
-        <div className="h-4 w-40 animate-pulse rounded bg-surface-overlay" />
+        {error ? (
+          <p className="text-sm text-danger" role="alert">
+            {error}
+          </p>
+        ) : (
+          <div className="h-4 w-40 animate-pulse rounded bg-surface-overlay" />
+        )}
       </div>
     );
   }
