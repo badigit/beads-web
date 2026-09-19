@@ -15,7 +15,15 @@ if (-not $ProjectRoot) {
   $ProjectRoot = if ($env:BEADS_WEB_PROJECT_ROOT) {
     $env:BEADS_WEB_PROJECT_ROOT
   } else {
-    Split-Path -Parent $repoRoot
+    # Из linked worktree родитель чекаута это .claude\worktrees, где никаких
+    # проектов нет и обход молча находит пустоту. Основной чекаут знает git:
+    # --git-common-dir указывает на .git ОСНОВНОГО репозитория.
+    $commonDir = & git -C $repoRoot rev-parse --path-format=absolute --git-common-dir 2>$null
+    if ($LASTEXITCODE -eq 0 -and $commonDir) {
+      Split-Path -Parent (Split-Path -Parent $commonDir)
+    } else {
+      Split-Path -Parent $repoRoot
+    }
   }
 }
 $binary = Join-Path $repoRoot "bin\beads-web-win-x64-direct.exe"
