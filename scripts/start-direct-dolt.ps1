@@ -18,8 +18,15 @@ if (-not $ProjectRoot) {
     # Из linked worktree родитель чекаута это .claude\worktrees, где никаких
     # проектов нет и обход молча находит пустоту. Основной чекаут знает git:
     # --git-common-dir указывает на .git ОСНОВНОГО репозитория.
-    $commonDir = & git -C $repoRoot rev-parse --path-format=absolute --git-common-dir 2>$null
-    if ($LASTEXITCODE -eq 0 -and $commonDir) {
+    # Наличие git проверяется заранее: при $ErrorActionPreference = "Stop"
+    # вызов отсутствующей команды бросает terminating-ошибку, и фолбэк ниже
+    # не выполнился бы никогда.
+    $commonDir = if (Get-Command git -ErrorAction SilentlyContinue) {
+      & git -C $repoRoot rev-parse --path-format=absolute --git-common-dir 2>$null
+    } else {
+      $null
+    }
+    if ($commonDir) {
       Split-Path -Parent (Split-Path -Parent $commonDir)
     } else {
       Split-Path -Parent $repoRoot
