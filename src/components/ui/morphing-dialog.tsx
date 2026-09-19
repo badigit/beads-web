@@ -258,9 +258,19 @@ export type MorphingDialogContainerProps = {
   children: React.ReactNode;
   className?: string;
   style?: React.CSSProperties;
+  /**
+   * Куда порталить полноэкранный слой. По умолчанию `document.body`.
+   *
+   * Внутри модального диалога body не годится: focus trap считает всё за
+   * пределами диалога чужим и возвращает фокус обратно, из-за чего до кнопок
+   * полноэкранного слоя нельзя было добраться с клавиатуры (bweb-afx).
+   * Слой позиционируется `fixed`, поэтому от смены DOM-родителя его геометрия
+   * не меняется.
+   */
+  container?: HTMLElement | null;
 };
 
-function MorphingDialogContainer({ children }: MorphingDialogContainerProps) {
+function MorphingDialogContainer({ children, container }: MorphingDialogContainerProps) {
   const { isOpen, uniqueId, contentElement } = useMorphingDialog();
   const [mounted, setMounted] = useState(false);
 
@@ -293,7 +303,7 @@ function MorphingDialogContainer({ children }: MorphingDialogContainerProps) {
         </RemoveScroll>
       )}
     </AnimatePresence>,
-    document.body
+    container ?? document.body
   );
 }
 

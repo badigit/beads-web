@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 
@@ -41,6 +43,31 @@ describe('bead detail — панель как диалог', () => {
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it('после закрытия фокус возвращается на то, что панель открыло', async () => {
+    // Панель открывается программно, без Dialog.Trigger: Radix в этом случае
+    // фокусирует пустой triggerRef, и фокус уезжает на body.
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Открыть
+          </button>
+          <BeadDetail bead={BEAD} open={open} onOpenChange={setOpen} />
+        </>
+      );
+    }
+
+    render(<Harness />);
+    const opener = screen.getByRole('button', { name: 'Открыть' });
+    opener.focus();
+    fireEvent.click(opener);
+
+    fireEvent.keyDown(await screen.findByRole('dialog'), { key: 'Escape' });
+
+    await waitFor(() => expect(document.activeElement).toBe(opener));
   });
 
   it('у диалога есть доступное имя — заголовок бида', () => {

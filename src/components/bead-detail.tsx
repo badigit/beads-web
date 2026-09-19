@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import {
@@ -191,6 +191,15 @@ export function BeadDetail({
     setIsDesignDocFullScreen(isFullScreen);
   }, []);
 
+  // Панель открывается программно, а не из `Dialog.Trigger`, и Radix при
+  // закрытии фокусирует пустой triggerRef — фокус уезжает на body, и
+  // клавиатурный пользователь теряет место в списке. Возвращаем его сами.
+  const [contentElement, setContentElement] = useState<HTMLDivElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (open) openerRef.current = document.activeElement as HTMLElement | null;
+  }, [open]);
+
   // Override Radix's scroll lock when MorphingDialog is fullscreen
   useEffect(() => {
     if (isDesignDocFullScreen) {
@@ -213,11 +222,16 @@ export function BeadDetail({
           // aria-hidden и сам aria-modal не ставит. Атрибут добавлен явно —
           // на него опираются автоматические проверки доступности (bweb-afx).
           aria-modal="true"
-          className={cn(
-            "fixed inset-y-0 right-0 z-50 w-full sm:max-w-lg md:max-w-2xl lg:max-w-3xl xl:max-w-[50vw] overflow-y-auto bg-surface-base border-l border-b-default p-6 shadow-lg focus:outline-none",
-            isDesignDocFullScreen && "invisible"
-          )}
+          ref={setContentElement}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            openerRef.current?.focus?.();
+          }}
+          className="fixed inset-y-0 right-0 z-50 w-full sm:max-w-lg md:max-w-2xl lg:max-w-3xl xl:max-w-[50vw] overflow-y-auto bg-surface-base border-l border-b-default p-6 shadow-lg focus:outline-none"
         >
+          {/* Полноэкранный документ порталится внутрь этого же диалога, поэтому
+              прячется содержимое панели, а не сам диалог. */}
+          <div className={cn(isDesignDocFullScreen && "invisible")}>
           <div className="space-y-2">
             <DialogPrimitive.Title className="text-xl font-semibold leading-tight text-t-primary">
               <EditableField
@@ -448,12 +462,14 @@ export function BeadDetail({
                 epicId={bead.id}
                 projectPath={projectPath}
                 onFullScreenChange={handleFullScreenChange}
+                fullScreenContainer={contentElement}
               />
             </div>
           )}
 
           {/* Children slot for comments + timeline */}
           {children && <div className="mt-6">{children}</div>}
+          </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
 
