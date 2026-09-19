@@ -196,9 +196,6 @@ export function BeadDetail({
   // клавиатурный пользователь теряет место в списке. Возвращаем его сами.
   const [contentElement, setContentElement] = useState<HTMLDivElement | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    if (open) openerRef.current = document.activeElement as HTMLElement | null;
-  }, [open]);
 
   // Override Radix's scroll lock when MorphingDialog is fullscreen
   useEffect(() => {
@@ -223,6 +220,13 @@ export function BeadDetail({
           // на него опираются автоматические проверки доступности (bweb-afx).
           aria-modal="true"
           ref={setContentElement}
+          onOpenAutoFocus={(event) => {
+            // Именно здесь, а не в эффекте: Radix переводит фокус внутрь
+            // диалога из своего дочернего эффекта, который успевает раньше
+            // эффекта этого компонента, и запоминать было бы уже нечего.
+            openerRef.current = document.activeElement as HTMLElement | null;
+            void event;
+          }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             openerRef.current?.focus?.();
