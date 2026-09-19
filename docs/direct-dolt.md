@@ -5,7 +5,7 @@ The primary Windows deployment uses a single embedded frontend/backend binary an
 ## Build
 
 ```powershell
-& "C:\Users\Dee\GitHub\beads-web\scripts\build-windows-direct.ps1"
+& "<repo>\scripts\build-windows-direct.ps1"   # <repo> — каталог этого чекаута
 ```
 
 The build produces `bin\beads-web-win-x64-direct.exe`. The upstream `bin\beads-web-win-x64.exe` remains unchanged for rollback.
@@ -57,10 +57,10 @@ The dev server proxies `/api/*` to the running backend (`BEADS_API_PORT`, defaul
 ## Start
 
 ```powershell
-& "C:\Users\Dee\GitHub\beads-web\scripts\start-direct-dolt.ps1" -Port 3056
+& "<repo>\scripts\start-direct-dolt.ps1" -Port 3056
 ```
 
-The launcher registers local repositories containing `.beads\metadata.json`. Local project paths retain CLI, Git, worktree, and editor actions while issue reads use central Dolt SQL.
+The launcher registers local repositories containing `.beads\metadata.json`. Каталог для обхода задаётся `-ProjectRoot`; без него берётся `BEADS_WEB_PROJECT_ROOT`, а затем каталог, в котором лежит сам чекаут. Local project paths retain CLI, Git, worktree, and editor actions while issue reads use central Dolt SQL.
 
 Cleanup before start is scoped to `-Port` by default (only the process actually listening on it is stopped). Pass `-KillAll` to additionally kill every `beads-web-win-x64*`/`beads-server` process on the machine by name, regardless of port — only needed to clear a stuck instance that isn't listening on any port. Do not use this routinely: it can kill unrelated running instances (e.g. a pm2-managed instance on a different port).
 
@@ -80,5 +80,5 @@ Stop the Direct Dolt process and run the preserved legacy launcher:
 
 ```powershell
 Get-Process "beads-web-win-x64-direct" -ErrorAction SilentlyContinue | Stop-Process -Force
-& "C:\Users\Dee\GitHub\start-beads-web-legacy.ps1"
+& "<repo-parent>\start-beads-web-legacy.ps1"   # лежит рядом с чекаутом
 ```

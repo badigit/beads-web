@@ -39,7 +39,7 @@ function deferred<T>() {
 
 const defaultProps = {
   beadId: 'bweb-en5.2',
-  projectPath: 'C:/Users/Dee/GitHub/beads-web',
+  projectPath: 'C:/repos/beads-web',
 };
 
 const buttonName = /start claude session/i;

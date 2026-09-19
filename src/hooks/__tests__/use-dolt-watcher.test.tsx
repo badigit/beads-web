@@ -92,11 +92,11 @@ describe('useDoltWatcher', () => {
     // The bug this covers (bweb-wh2): every real project is registered by
     // filesystem path while its beads live in central Dolt, and gating the
     // subscription on a `dolt://` path meant no project ever subscribed.
-    renderHook(() => useDoltWatcher('C:/Users/Dee/GitHub/config_parser', vi.fn()));
+    renderHook(() => useDoltWatcher('C:/repos/config_parser', vi.fn()));
 
     expect(FakeEventSource.instances).toHaveLength(1);
     expect(FakeEventSource.latest().url).toContain(
-      `project_path=${encodeURIComponent('C:/Users/Dee/GitHub/config_parser')}`
+      `project_path=${encodeURIComponent('C:/repos/config_parser')}`
     );
   });
 

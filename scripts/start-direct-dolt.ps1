@@ -1,11 +1,23 @@
 param(
   [int]$Port = 3056,
-  [string]$ProjectRoot = "C:\Users\Dee\GitHub",
+  # Каталог, который обходится в поисках репозиториев с .beads\metadata.json.
+  # Пусто — берётся BEADS_WEB_PROJECT_ROOT, иначе каталог, где лежит чекаут:
+  # раньше здесь стоял путь конкретной машины, и у любого другого пользователя
+  # запуск без параметра сканировал несуществующий каталог (bweb-2pj).
+  [string]$ProjectRoot = "",
   [switch]$KillAll
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+if (-not $ProjectRoot) {
+  $ProjectRoot = if ($env:BEADS_WEB_PROJECT_ROOT) {
+    $env:BEADS_WEB_PROJECT_ROOT
+  } else {
+    Split-Path -Parent $repoRoot
+  }
+}
 $binary = Join-Path $repoRoot "bin\beads-web-win-x64-direct.exe"
 $logDir = Join-Path $repoRoot "server\target"
 $outLog = Join-Path $logDir "direct-dolt-$Port.out.log"

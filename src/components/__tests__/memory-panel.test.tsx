@@ -20,7 +20,7 @@ vi.mock("@/lib/api", () => ({
 // eslint-disable-next-line import/first, import/order
 import { MemoryPanel } from "../memory-panel";
 
-const PROJECT = "C:/Users/Dee/GitHub/beads-web";
+const PROJECT = "C:/repos/beads-web";
 
 const ENTRIES = [
   { key: "beads-web-build-windows", content: "Use the GNU toolchain." },
