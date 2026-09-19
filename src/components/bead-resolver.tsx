@@ -118,7 +118,7 @@ export function BeadResolver({ beadId }: BeadResolverProps) {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-surface-base px-4">
+    <div className="flex page-shell flex-col items-center justify-center gap-4 bg-surface-base px-4">
       {children}
     </div>
   );

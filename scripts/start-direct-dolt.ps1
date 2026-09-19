@@ -1,11 +1,38 @@
 param(
   [int]$Port = 3056,
-  [string]$ProjectRoot = "C:\Users\Dee\GitHub",
+  # Каталог, который обходится в поисках репозиториев с .beads\metadata.json.
+  # Пусто — берётся BEADS_WEB_PROJECT_ROOT, иначе каталог, где лежит чекаут:
+  # раньше здесь стоял путь конкретной машины, и у любого другого пользователя
+  # запуск без параметра сканировал несуществующий каталог (bweb-2pj).
+  [string]$ProjectRoot = "",
   [switch]$KillAll
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+
+if (-not $ProjectRoot) {
+  $ProjectRoot = if ($env:BEADS_WEB_PROJECT_ROOT) {
+    $env:BEADS_WEB_PROJECT_ROOT
+  } else {
+    # Из linked worktree родитель чекаута это .claude\worktrees, где никаких
+    # проектов нет и обход молча находит пустоту. Основной чекаут знает git:
+    # --git-common-dir указывает на .git ОСНОВНОГО репозитория.
+    # Наличие git проверяется заранее: при $ErrorActionPreference = "Stop"
+    # вызов отсутствующей команды бросает terminating-ошибку, и фолбэк ниже
+    # не выполнился бы никогда.
+    $commonDir = if (Get-Command git -ErrorAction SilentlyContinue) {
+      & git -C $repoRoot rev-parse --path-format=absolute --git-common-dir 2>$null
+    } else {
+      $null
+    }
+    if ($commonDir) {
+      Split-Path -Parent (Split-Path -Parent $commonDir)
+    } else {
+      Split-Path -Parent $repoRoot
+    }
+  }
+}
 $binary = Join-Path $repoRoot "bin\beads-web-win-x64-direct.exe"
 $logDir = Join-Path $repoRoot "server\target"
 $outLog = Join-Path $logDir "direct-dolt-$Port.out.log"

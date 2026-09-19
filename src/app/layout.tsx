@@ -1,8 +1,11 @@
+import { Suspense } from 'react';
+
 import { Inter, Space_Grotesk, Space_Mono, Plus_Jakarta_Sans } from 'next/font/google';
 
 import { DevTools } from '@/components/dev-tools';
 import { GlobalSearch } from '@/components/global-search';
 import { GlobalSettingsButton } from '@/components/global-settings-button';
+import { RecentProjectsBar } from '@/components/recent-projects-bar';
 import { ServiceWorkerRegistration } from '@/components/service-worker-registration';
 import { ThemeInitScript } from '@/components/theme-init';
 import { Toaster } from '@/components/ui/toaster';
@@ -68,6 +71,12 @@ export default function RootLayout({
         <ThemeInitScript />
       </head>
       <body className="flex min-h-screen flex-col bg-background antialiased transition-colors duration-300">
+        {/* Recent projects strip — global, in normal flow above every page.
+            Wrapped in Suspense because it reads `useSearchParams`, which a
+            statically exported build requires to sit behind a boundary. */}
+        <Suspense fallback={<div className="h-[var(--recent-bar-h)] shrink-0 border-b border-b-default bg-surface-raised" />}>
+          <RecentProjectsBar />
+        </Suspense>
         <div className="flex-1">{children}</div>
         <GlobalSearch />
         <GlobalSettingsButton />

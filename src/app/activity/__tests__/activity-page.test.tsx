@@ -35,7 +35,7 @@ import ActivityPage from "../page";
 const PROJECT = {
   id: "p-1",
   name: "beads-web",
-  path: "C:/Users/Dee/GitHub/beads-web",
+  path: "C:/repos/beads-web",
   tags: [],
   lastOpened: "2026-08-29T10:00:00Z",
   createdAt: "2026-08-01T10:00:00Z",

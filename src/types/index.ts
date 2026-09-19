@@ -131,6 +131,8 @@ export interface Bead {
   children?: string[];        // IDs of child tasks (for epics)
   design_doc?: string;        // Path like ".designs/{EPIC_ID}.md"
   defer_until?: string | null; // ISO date set by `bd defer --until`; null when deferred indefinitely
+  due_at?: string | null;     // ISO date set by `bd update --due`
+  estimated_minutes?: number | null; // `bd update -e`; 0 означает «оценки нет» — снятие пишет ноль
   deps?: string[];            // Dependency IDs (blocking this task)
   blockers?: string[];        // COMPUTED: Tasks this blocks (derived from deps relationships)
   relates_to?: string[];      // Bead IDs with relates-to links (bidirectional "see also")

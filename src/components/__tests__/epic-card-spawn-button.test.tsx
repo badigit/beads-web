@@ -42,7 +42,7 @@ const defaultProps = {
   allBeads: [epic as Bead, child],
   onSelect: vi.fn(),
   onChildClick: vi.fn(),
-  projectPath: 'C:/Users/Dee/GitHub/beads-web',
+  projectPath: 'C:/repos/beads-web',
 };
 
 beforeEach(() => {

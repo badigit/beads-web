@@ -47,9 +47,6 @@ const CLAUDE_TIMEOUT: Duration = Duration::from_secs(180);
 /// How long `bd show` may take while fetching the bead title.
 const BD_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Base branch new bead worktrees are cut from.
-const DEFAULT_BASE_BRANCH: &str = "main";
-
 /// Request body for `POST /api/session/spawn`.
 #[derive(Deserialize)]
 pub struct SpawnSessionRequest {
@@ -57,13 +54,11 @@ pub struct SpawnSessionRequest {
     pub project_path: String,
     /// Bead ID to spawn a session for.
     pub bead_id: String,
-    /// Base branch for a freshly created worktree.
-    #[serde(default = "default_base_branch")]
-    pub base_branch: String,
-}
-
-fn default_base_branch() -> String {
-    DEFAULT_BASE_BRANCH.to_string()
+    /// Base branch for a freshly created worktree. Не задана — резолвится по
+    /// репозиторию (`worktree::resolve_base_branch`), а не литералом "main":
+    /// дефолт дублировался в двух модулях и оба врали (bweb-cod).
+    #[serde(default)]
+    pub base_branch: Option<String>,
 }
 
 /// Response body for `POST /api/session/spawn`.
@@ -543,9 +538,14 @@ async fn spawn_session_inner(
         )
     })?;
 
-    tracing::info!(bead_id, project_path, base_branch, "session spawn started");
+    tracing::info!(
+        bead_id,
+        project_path,
+        base_branch = base_branch.as_deref().unwrap_or("<origin/HEAD>"),
+        "session spawn started"
+    );
 
-    let worktree = ensure_worktree(&project_path, &bead_id, &base_branch).await?;
+    let worktree = ensure_worktree(&project_path, &bead_id, base_branch.as_deref()).await?;
     tracing::info!(
         bead_id,
         worktree_path = worktree.worktree_path,

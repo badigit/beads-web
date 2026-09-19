@@ -76,7 +76,7 @@ function renderEpicCard(epic: Epic, layout: string) {
       allBeads={[epic as Bead]}
       onSelect={vi.fn()}
       onChildClick={vi.fn()}
-      projectPath="C:/Users/Dee/GitHub/trade-vp1"
+      projectPath="C:/repos/trade-vp1"
     />
   );
 }
@@ -174,7 +174,7 @@ describe('deferred beads end to end, from API payload to card', () => {
       source: 'dolt-direct',
     } as unknown as Awaited<ReturnType<typeof api.beads.read>>);
 
-    const [bead] = await loadProjectBeads('C:/Users/Dee/GitHub/trade-vp1');
+    const [bead] = await loadProjectBeads('C:/repos/trade-vp1');
 
     // The parser drops it into the open column but must keep the raw status…
     expect(bead.status).toBe('open');

@@ -21,7 +21,7 @@ vi.mock("@/lib/api", () => ({
 // eslint-disable-next-line import/first, import/order
 import { useMemory } from "../use-memory";
 
-const PROJECT = "C:/Users/Dee/GitHub/beads-web";
+const PROJECT = "C:/repos/beads-web";
 
 const ENTRIES = [
   { key: "bd-cli-winget-path", content: "bd lives in the winget folder." },

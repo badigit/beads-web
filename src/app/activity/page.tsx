@@ -70,7 +70,7 @@ export default function ActivityPage() {
   }, []);
 
   return (
-    <div className="flex min-h-dvh flex-col bg-surface-base">
+    <div className="flex page-shell flex-col bg-surface-base">
       <header className="sticky top-0 z-20 border-b border-b-default bg-surface-base/95 backdrop-blur">
         <div className="mx-auto flex w-full max-w-[1000px] items-center gap-3 px-6 py-3">
           <Button

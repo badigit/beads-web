@@ -118,7 +118,7 @@ export default function ProjectsPage() {
 
 
   return (
-    <div className="flex min-h-dvh flex-col bg-surface-base">
+    <div className="flex page-shell flex-col bg-surface-base">
       <main className="flex flex-col items-center px-6 pt-10">
         <div className="w-full max-w-[1200px]">
           {/* Sort toggle + View toggle + Add Project */}

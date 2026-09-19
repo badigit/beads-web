@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 
 import { ColorPicker } from "@/components/color-picker";
+import { IgnoredDatabasesPanel } from "@/components/ignored-databases-panel";
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,7 +70,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="min-h-dvh bg-surface-base">
+    <div className="page-shell bg-surface-base">
       {/* Header */}
       <header className="sticky top-0 z-30 border-b border-b-default bg-surface-base/80 backdrop-blur-sm px-6 py-4">
         <div className="flex items-center gap-4">
@@ -341,6 +342,16 @@ export default function SettingsPage() {
               </div>
             )}
           </div>
+        </section>
+
+        {/* Hidden databases */}
+        <section className="mb-8">
+          <h2 className="mb-1 text-lg font-medium text-t-primary">Hidden databases</h2>
+          <p className="mb-4 text-sm text-t-tertiary">
+            Базы центрального Dolt, которые автосинк обходит стороной: их проекты удалили
+            вручную. Возвращённая база появится после ближайшего прохода синхронизации.
+          </p>
+          <IgnoredDatabasesPanel />
         </section>
 
         {/* Data Section */}

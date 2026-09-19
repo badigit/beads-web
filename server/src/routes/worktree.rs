@@ -131,13 +131,10 @@ pub struct CreateWorktreeRequest {
     pub repo_path: String,
     /// Bead ID for the worktree.
     pub bead_id: String,
-    /// Base branch to create from (defaults to "main").
-    #[serde(default = "default_base_branch")]
-    pub base_branch: String,
-}
-
-fn default_base_branch() -> String {
-    "main".to_string()
+    /// Base branch to create from. Не задана — резолвится по репозиторию
+    /// (`resolve_base_branch`), а не подставляется литералом "main".
+    #[serde(default)]
+    pub base_branch: Option<String>,
 }
 
 /// Response body for the create worktree endpoint.
@@ -169,11 +166,19 @@ pub struct CreateWorktreeResponse {
 /// }
 /// ```
 ///
+/// `base_branch` необязателен: без него база берётся из `origin/HEAD`.
+///
 /// # Response
 ///
 /// Returns the worktree path and whether it already existed.
 pub async fn create_worktree(Json(request): Json<CreateWorktreeRequest>) -> impl IntoResponse {
-    match ensure_worktree(&request.repo_path, &request.bead_id, &request.base_branch).await {
+    match ensure_worktree(
+        &request.repo_path,
+        &request.bead_id,
+        request.base_branch.as_deref(),
+    )
+    .await
+    {
         Ok(response) => Json(response).into_response(),
         Err(resp) => resp.into_response(),
     }
@@ -190,10 +195,12 @@ fn route_error(status: StatusCode, message: String) -> RouteError {
 /// otherwise. Shared by `POST /api/git/worktree` and `POST /api/session/spawn`
 /// so both endpoints agree on the layout (`<repo>/.worktrees/bd-<id>`) and on
 /// the branch-already-exists recovery path.
+/// `base_branch` — явный выбор вызывающей стороны; `None` означает «возьми базу
+/// репозитория», и её резолвит [`resolve_base_branch`].
 pub async fn ensure_worktree(
     repo_path_str: &str,
     bead_id: &str,
-    base_branch: &str,
+    base_branch: Option<&str>,
 ) -> Result<CreateWorktreeResponse, RouteError> {
     let repo_path = Path::new(repo_path_str);
     validate_path_security(repo_path).map_err(|e| route_error(StatusCode::FORBIDDEN, e))?;
@@ -233,6 +240,13 @@ pub async fn ensure_worktree(
         )
     })?;
 
+    // База считается только когда её не назвали: явный выбор вызывающей стороны
+    // не перепроверяется и не подменяется.
+    let base_branch = match base_branch {
+        Some(explicit) => explicit.to_string(),
+        None => resolve_base_branch(repo_path_str).await,
+    };
+
     // Create the worktree with a new branch
     let output = hidden_command("git")
         .args([
@@ -241,7 +255,7 @@ pub async fn ensure_worktree(
             &worktree_path.to_string_lossy(),
             "-b",
             &branch_name,
-            base_branch,
+            &base_branch,
         ])
         .current_dir(repo_path_str)
         .output()
@@ -1231,9 +1245,88 @@ async fn get_repo_nwo(repo_path: &str) -> Option<String> {
 // Helper Functions
 // ============================================================================
 
+/// База, от которой режутся ветки бидов, как commit-ish для git.
+///
+/// Фиксированный литерал "main" здесь врал: в этом форке живая линия —
+/// `badigit-main`, а ветка `main` отстала на полторы сотни коммитов, и worktree
+/// под бид резался от кода полуторамесячной давности (bweb-cod). Источник
+/// правды — `origin/HEAD`, который git ставит при клоне и обновляет
+/// `git remote set-head origin -a`.
+///
+/// Возвращается именно remote-tracking ref (`origin/badigit-main`), а не голое
+/// имя ветки: локальной копии может не быть вовсе, а если она есть, то обычно
+/// отстаёт — отрезав от неё, мы вернули бы ровно тот баг, от которого уходим.
+///
+/// Фолбэк, когда `origin/HEAD` не задан (репозиторий без remote, чекаут из
+/// архива): первая существующая ЛОКАЛЬНАЯ ветка из [`BASE_BRANCH_FALLBACKS`], а
+/// если нет и их — первый элемент списка, чтобы git сам сказал вызывающей
+/// стороне, чего именно не хватает.
+pub async fn resolve_base_branch(repo_path: &str) -> String {
+    if let Some(reference) = origin_head_ref(repo_path).await {
+        return reference;
+    }
+
+    for candidate in BASE_BRANCH_FALLBACKS {
+        if branch_exists(repo_path, candidate).await {
+            return candidate.to_string();
+        }
+    }
+
+    BASE_BRANCH_FALLBACKS[0].to_string()
+}
+
+/// Ветки, которые перебираются, когда `origin/HEAD` не задан.
+const BASE_BRANCH_FALLBACKS: [&str; 2] = ["main", "master"];
+
+/// Remote-tracking ref, на который указывает `refs/remotes/origin/HEAD`.
+async fn origin_head_ref(repo_path: &str) -> Option<String> {
+    let output = hidden_command("git")
+        .args(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+        .current_dir(repo_path)
+        .output()
+        .await
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let reference = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    // Без слэша это не remote-tracking ref, а что-то неожиданное: лучше уйти в
+    // фолбэк, чем отрезать ветку от непонятного ревизионного выражения.
+    if !reference.contains('/') {
+        return None;
+    }
+
+    // `origin/HEAD` переживает удаление и переименование ветки, на которую
+    // указывает: symbolic-ref при этом отвечает успехом, а самого ref'а уже
+    // нет. Без этой проверки висячий указатель уводил бы в отказ и создание
+    // worktree, и rebase — при живой локальной ветке в фолбэке.
+    rev_exists(repo_path, &reference).await.then_some(reference)
+}
+
+/// Есть ли такая локальная ветка в репозитории.
+async fn branch_exists(repo_path: &str, branch: &str) -> bool {
+    rev_exists(repo_path, &format!("refs/heads/{branch}")).await
+}
+
+/// Резолвится ли ревизия в этом репозитории.
+async fn rev_exists(repo_path: &str, rev: &str) -> bool {
+    hidden_command("git")
+        .args(["rev-parse", "--verify", "--quiet", rev])
+        .current_dir(repo_path)
+        .output()
+        .await
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 /// Get the number of commits ahead and behind for a worktree branch.
 async fn get_ahead_behind_worktree(repo_path: &str, branch: &str) -> (i32, i32) {
-    let base_branches = ["main", "master"];
+    // Та же база, от которой ветка и была отрезана: счёт против отставшей
+    // `main` показывал бы чужие коммиты как «behind».
+    let resolved = resolve_base_branch(repo_path).await;
+    let base_branches = [resolved.as_str(), BASE_BRANCH_FALLBACKS[0], BASE_BRANCH_FALLBACKS[1]];
 
     for base in base_branches {
         let output = hidden_command("git")
@@ -1531,7 +1624,7 @@ fn get_bead_status(repo_path: &Path, bead_id: &str) -> Option<String> {
     None
 }
 
-/// Rebase all sibling worktrees onto latest origin/main.
+/// Rebase all sibling worktrees onto the latest repository base branch.
 ///
 /// # Endpoint
 ///
@@ -1628,6 +1721,9 @@ pub async fn rebase_siblings(Json(request): Json<RebaseSiblingsRequest>) -> impl
             .into_response();
     }
 
+    // База считается один раз на весь проход: она общая для всех соседей.
+    let base = resolve_base_branch(&request.repo_path).await;
+
     // Rebase each sibling that is in 'inreview' status
     for sibling in siblings {
         let bead_id = match sibling.bead_id {
@@ -1648,15 +1744,23 @@ pub async fn rebase_siblings(Json(request): Json<RebaseSiblingsRequest>) -> impl
             continue;
         }
 
-        let result = rebase_single_worktree(&sibling.path, &bead_id).await;
+        let result = rebase_single_worktree(&sibling.path, &bead_id, &base).await;
         results.push(result);
     }
 
     Json(RebaseSiblingsResponse { results, skipped }).into_response()
 }
 
-/// Rebase a single worktree onto origin/main.
-async fn rebase_single_worktree(worktree_path: &str, bead_id: &str) -> RebaseSiblingResult {
+/// Rebase a single worktree onto the repository base branch.
+///
+/// `base` приходит от [`resolve_base_branch`]: жёсткий `origin/main` уводил
+/// соседние ветки на чужую историю и тут же отправлял её force-push'ем
+/// (bweb-cod, находка ревью).
+async fn rebase_single_worktree(
+    worktree_path: &str,
+    bead_id: &str,
+    base: &str,
+) -> RebaseSiblingResult {
     // Fetch in the worktree to update refs
     let fetch_result = hidden_command("git")
         .args(["fetch", "origin"])
@@ -1672,9 +1776,9 @@ async fn rebase_single_worktree(worktree_path: &str, bead_id: &str) -> RebaseSib
         };
     }
 
-    // Try to rebase onto origin/main
+    // Try to rebase onto the resolved base
     let rebase_output = hidden_command("git")
-        .args(["rebase", "origin/main"])
+        .args(["rebase", base])
         .current_dir(worktree_path)
         .output()
         .await;
@@ -1739,6 +1843,146 @@ async fn rebase_single_worktree(worktree_path: &str, bead_id: &str) -> RebaseSib
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Репозиторий с одним коммитом на ветке `initial`, без remote.
+    fn init_repo(dir: &std::path::Path) {
+        let git = |args: &[&str]| {
+            let result = std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .expect("git");
+            assert!(
+                result.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        };
+        git(&["init", "--initial-branch=initial"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "test"]);
+        std::fs::write(dir.join("file.txt"), "x").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-m", "initial"]);
+    }
+
+    /// Вспомогательная git-команда теста: результат не важен, важен эффект.
+    fn git_in(dir: &std::path::Path, args: &[&str]) {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git");
+    }
+
+    #[tokio::test]
+    async fn base_branch_comes_from_origin_head_as_a_remote_ref() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        init_repo(repo);
+        // Живая линия называется не "main" — ровно случай bweb-cod. Локальной
+        // копии этой ветки в репозитории нет: база обязана остаться
+        // remote-tracking ref'ом, иначе worktree резать не от чего.
+        git_in(
+            repo,
+            &[
+                "update-ref",
+                "refs/remotes/origin/badigit-main",
+                "refs/heads/initial",
+            ],
+        );
+        git_in(
+            repo,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/badigit-main",
+            ],
+        );
+
+        assert_eq!(
+            resolve_base_branch(&repo.to_string_lossy()).await,
+            "origin/badigit-main"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolved_base_is_a_commit_ish_git_accepts() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        init_repo(repo);
+        git_in(
+            repo,
+            &[
+                "update-ref",
+                "refs/remotes/origin/badigit-main",
+                "refs/heads/initial",
+            ],
+        );
+        git_in(
+            repo,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/badigit-main",
+            ],
+        );
+
+        // Имя, которое git не понимает, обнаружилось бы только на живом
+        // `git worktree add` — то есть у пользователя.
+        let base = resolve_base_branch(&repo.to_string_lossy()).await;
+        let resolved = std::process::Command::new("git")
+            .args(["rev-parse", "--verify", &base])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(resolved.status.success(), "git не понял базу {base}");
+    }
+
+    #[tokio::test]
+    async fn dangling_origin_head_falls_back_to_a_local_branch() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        init_repo(repo);
+        git_in(repo, &["branch", "main"]);
+        // Указатель есть, ветки, на которую он смотрит, уже нет: git отвечает
+        // на symbolic-ref успехом, а commit-ish не резолвится.
+        git_in(
+            repo,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/badigit-main",
+            ],
+        );
+
+        assert_eq!(resolve_base_branch(&repo.to_string_lossy()).await, "main");
+    }
+
+    #[tokio::test]
+    async fn base_branch_falls_back_to_an_existing_branch_without_origin_head() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        init_repo(repo);
+        git_in(repo, &["branch", "master"]);
+
+        // `main` в этом репозитории нет, `master` есть — перебор обязан дойти
+        // до второго кандидата, а не остановиться на первом литерале.
+        assert_eq!(resolve_base_branch(&repo.to_string_lossy()).await, "master");
+    }
+
+    #[tokio::test]
+    async fn base_branch_keeps_the_first_fallback_when_nothing_matches() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        init_repo(repo);
+
+        assert_eq!(
+            resolve_base_branch(&repo.to_string_lossy()).await,
+            "main",
+            "без origin/HEAD и без кандидатов git должен сам сообщить, чего нет"
+        );
+    }
 
     #[test]
     fn test_extract_bead_id() {

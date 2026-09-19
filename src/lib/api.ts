@@ -241,7 +241,23 @@ export const beads = {
     body: JSON.stringify(data),
   }),
 
-  update: (data: { path: string; id: string; title?: string; description?: string; status?: string }) =>
+  /**
+   * Правка полей бида.
+   *
+   * `due` и `defer` уходят в bd в его форматах (`+1d`, `tomorrow`, ISO); пустая
+   * строка снимает значение. `estimate` — минуты, ноль снимает оценку. Эти три
+   * поля требуют проекта с локальной папкой: в `dolt://` их парсить некому.
+   */
+  update: (data: {
+    path: string;
+    id: string;
+    title?: string;
+    description?: string;
+    status?: string;
+    due?: string;
+    defer?: string;
+    estimate?: number;
+  }) =>
     fetchApi<{ success: boolean }>('/api/beads/update', {
       method: 'PATCH',
       body: JSON.stringify(data),
@@ -406,10 +422,21 @@ export const git = {
     return data;
   },
 
-  createWorktree: (repoPath: string, beadId: string, baseBranch = 'main') =>
+  /**
+   * Создаёт worktree под бид.
+   *
+   * `baseBranch` не задан — поле не уезжает вовсе, и базу выбирает сервер по
+   * `origin/HEAD`. Раньше здесь стоял литерал `'main'`, и ветка резалась от
+   * него даже в репозитории, где живая линия называется иначе (bweb-cod).
+   */
+  createWorktree: (repoPath: string, beadId: string, baseBranch?: string) =>
     fetchApi<CreateWorktreeResponse>('/api/git/worktree', {
       method: 'POST',
-      body: JSON.stringify({ repo_path: repoPath, bead_id: beadId, base_branch: baseBranch }),
+      body: JSON.stringify({
+        repo_path: repoPath,
+        bead_id: beadId,
+        ...(baseBranch ? { base_branch: baseBranch } : {}),
+      }),
     }),
 
   deleteWorktree: (repoPath: string, beadId: string) =>
@@ -563,6 +590,15 @@ export interface DoltServer {
 }
 
 /**
+ * База, которую автосинк не заводит: её проект удалили из реестра руками.
+ */
+export interface IgnoredDatabase {
+  dbName: string;
+  /** RFC 3339 */
+  ignoredAt: string;
+}
+
+/**
  * Dolt API
  */
 export const dolt = {
@@ -582,6 +618,18 @@ export const dolt = {
     fetchApi<{ ignored: number }>('/api/dolt/ignored', {
       method: 'POST',
       body: JSON.stringify({ names }),
+    }),
+  /** Скрытые базы: что именно автосинк обходит стороной и с какого числа. */
+  ignored: () => fetchApi<{ ignored: IgnoredDatabase[] }>('/api/dolt/ignored'),
+  /**
+   * Снимает игнор с одного имени.
+   *
+   * Проект появится не сразу: его заведёт ближайший проход автосинка — тот же,
+   * что заводит все остальные базы.
+   */
+  unignore: (name: string) =>
+    fetchApi<void>(`/api/dolt/ignored/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
     }),
 };
 
@@ -657,7 +705,7 @@ export const update = {
 export interface SpawnSessionInput {
   project_path: string;
   bead_id: string;
-  /** Base branch for a freshly created worktree (server default: `main`) */
+  /** Base branch for a freshly created worktree (не задана — сервер берёт `origin/HEAD`) */
   base_branch?: string;
 }
 

@@ -168,6 +168,19 @@
   }
 }
 
+/* Height of the global recent-projects bar (src/components/recent-projects-bar.tsx).
+   Page shells subtract it from their own height via .page-shell, so mounting
+   the bar does not push the viewport into a scrollbar. */
+:root {
+  --recent-bar-h: 2.25rem;
+}
+
+/* Full-height page root, minus the global recent-projects bar. Replaces a bare
+   min-h-dvh on page roots. */
+.page-shell {
+  min-height: calc(100dvh - var(--recent-bar-h));
+}
+
 @layer base {
   * {
     @apply border-border;

@@ -55,7 +55,7 @@ function renderEpic(layout: string) {
       ticketNumber={42}
       onSelect={onSelect}
       onChildClick={vi.fn()}
-      projectPath="C:/Users/Dee/GitHub/beads-web"
+      projectPath="C:/repos/beads-web"
     />
   );
   return { onSelect };

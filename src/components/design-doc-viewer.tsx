@@ -34,6 +34,11 @@ export interface DesignDocViewerProps {
   onFullScreenChange?: (isFullScreen: boolean) => void;
   /** Whether the dialog should start in open state */
   defaultOpen?: boolean;
+  /**
+   * Куда порталить полноэкранный слой. Панель деталей передаёт сюда свой
+   * диалог, иначе его focus trap не пускает клавиатуру в этот слой (bweb-afx).
+   */
+  fullScreenContainer?: HTMLElement | null;
 }
 
 /**
@@ -65,7 +70,7 @@ const proseStyles = cn(
  * Markdown renderer for design docs with syntax highlighting
  * Uses MorphingDialog for smooth expand/collapse animation
  */
-export function DesignDocViewer({ designDocPath, epicId, projectPath, onFullScreenChange, defaultOpen }: DesignDocViewerProps) {
+export function DesignDocViewer({ designDocPath, epicId, projectPath, onFullScreenChange, defaultOpen, fullScreenContainer }: DesignDocViewerProps) {
   const [content, setContent] = useState<string>("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -161,7 +166,7 @@ export function DesignDocViewer({ designDocPath, epicId, projectPath, onFullScre
         </Card>
       </MorphingDialogTrigger>
 
-      <MorphingDialogContainer>
+      <MorphingDialogContainer container={fullScreenContainer}>
         <MorphingDialogContent
           className="relative bg-surface-raised border-b-default rounded-lg shadow-lg w-[60vw] max-h-[80vh] overflow-hidden"
         >
