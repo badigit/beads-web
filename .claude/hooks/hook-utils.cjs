@@ -138,6 +138,7 @@ function execCommand(cmd, args, opts) {
     const result = execFileSync(cmd, args, {
       encoding: 'utf8',
       timeout: 10000,
+      windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
       // On Windows, npm CLIs (bd, gh) are .cmd wrappers that
       // execFileSync can't find without shell. NOTE: with shell:true Node

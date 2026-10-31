@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 'use strict';
 
-// SessionStart: Show full task context for orchestrator
+// SessionStart: Show a compact task selection for the orchestrator.
 
 const fs = require('fs');
 const path = require('path');
-const { injectText, execCommand, getProjectDir, runHook } = require('./hook-utils.cjs');
+const { injectText, execCommand, execCommandJSON, getProjectDir, runHook } = require('./hook-utils.cjs');
 
 runHook('session-start', () => {
   const projectDir = getProjectDir();
@@ -23,6 +23,15 @@ runHook('session-start', () => {
   }
 
   const output = [];
+  const taskLimit = 5;
+  const taskSummary = args => {
+    const tasks = execCommandJSON('bd', [...args, '--json', '--brief', '--limit', String(taskLimit)], { cwd: projectDir });
+    if (!Array.isArray(tasks)) return '';
+    return tasks.slice(0, taskLimit)
+      .filter(task => task && typeof task.id === 'string' && typeof task.title === 'string')
+      .map(task => `- ${task.id} [${task.status || 'unknown'}, P${task.priority ?? '?'}] ${task.title.replace(/\s+/g, ' ').trim()}`)
+      .join('\n');
+  };
 
   // ============================================================
   // Dirty Parent Check
@@ -92,20 +101,23 @@ runHook('session-start', () => {
   output.push('');
 
   // Show in-progress beads
-  const inProgress = execCommand('bd', ['list', '--status', 'in_progress']);
+  const inProgress = taskSummary(['list', '--status', 'in_progress']);
   if (inProgress) {
-    const lines = inProgress.split('\n').slice(0, 5).join('\n');
     output.push('### In Progress (resume these):');
-    output.push(lines);
+    output.push(inProgress);
     output.push('');
   }
 
   // Show ready (unblocked) beads
-  const ready = execCommand('bd', ['ready']);
+  const ready = taskSummary(['ready']);
   if (ready) {
-    const lines = ready.split('\n').slice(0, 5).join('\n');
     output.push('### Ready (no blockers):');
-    output.push(lines);
+    output.push(ready);
+    output.push('');
+  }
+
+  if (inProgress || ready) {
+    output.push('Before starting a selected task, read full context: bd show <ID> and bd comments <ID>.');
     output.push('');
   }
 

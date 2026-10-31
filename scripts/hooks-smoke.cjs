@@ -54,6 +54,7 @@ function runHookProc(hookName, payload, opts = {}) {
     env,
     encoding: 'utf8',
     timeout: 30000,
+    windowsHide: true,
   });
   return { stdout: res.stdout || '', stderr: res.stderr || '', status: res.status };
 }
@@ -97,6 +98,7 @@ function writeStubs() {
     'if "%~1"=="show" if defined BD_STUB_SHOW_JSON echo %BD_STUB_SHOW_JSON%',
     'if "%~1"=="dep" if defined BD_STUB_DEP_JSON echo %BD_STUB_DEP_JSON%',
     'if "%~1"=="list" if defined BD_STUB_LIST_JSON echo %BD_STUB_LIST_JSON%',
+    'if "%~1"=="ready" if defined BD_STUB_READY_JSON echo %BD_STUB_READY_JSON%',
     'exit /b 0',
   ].join('\r\n') + '\r\n';
   fs.writeFileSync(path.join(stubBin, 'bd.cmd'), bdCmd);
@@ -110,6 +112,7 @@ function writeStubs() {
     '  show) [ -n "$BD_STUB_SHOW_JSON" ] && printf "%s\\n" "$BD_STUB_SHOW_JSON" ;;',
     '  dep)  [ -n "$BD_STUB_DEP_JSON" ] && printf "%s\\n" "$BD_STUB_DEP_JSON" ;;',
     '  list) [ -n "$BD_STUB_LIST_JSON" ] && printf "%s\\n" "$BD_STUB_LIST_JSON" ;;',
+    '  ready) [ -n "$BD_STUB_READY_JSON" ] && printf "%s\\n" "$BD_STUB_READY_JSON" ;;',
     'esac',
     'exit 0',
   ].join('\n') + '\n';
@@ -120,11 +123,11 @@ function writeStubs() {
 function makeRepo(name, branch) {
   const dir = path.join(sandbox, name);
   fs.mkdirSync(dir, { recursive: true });
-  execFileSync('git', ['-C', dir, 'init', '-q', '-b', branch], { stdio: 'ignore' });
+  execFileSync('git', ['-C', dir, 'init', '-q', '-b', branch], { stdio: 'ignore', windowsHide: true, timeout: 10000 });
   execFileSync('git', [
     '-C', dir, '-c', 'user.email=smoke@test', '-c', 'user.name=smoke',
     'commit', '--allow-empty', '--no-verify', '-q', '-m', 'init',
-  ], { stdio: 'ignore' });
+  ], { stdio: 'ignore', windowsHide: true, timeout: 10000 });
   return dir;
 }
 
@@ -305,6 +308,33 @@ function testSessionStart() {
   check('suggests bd create when no beads', r.stdout.includes('No active beads'), r.stdout);
   check('no inreview references', !r.stdout.includes('inreview'), r.stdout);
   check('no dead recall.cjs reference', !r.stdout.includes('recall.cjs'), r.stdout);
+
+  const log = path.join(sandbox, 'session-start-bd.log');
+  const ready = Array.from({ length: 6 }, (_, i) => ({
+    id: `bweb-${i + 1}`, title: `Ready task ${i + 1}`, status: 'open', priority: i % 4,
+    description: 'Full description must not be injected during selection',
+  }));
+  r = runHookProc('session-start.cjs', {}, {
+    cwd: repoMain, stubs: true,
+    env: {
+      BD_STUB_LOG: log,
+      BD_STUB_LIST_JSON: JSON.stringify([{ id: 'bweb-wip', title: 'In progress', status: 'in_progress', priority: 0 }]),
+      BD_STUB_READY_JSON: JSON.stringify(ready),
+    },
+  });
+  const calls = fs.readFileSync(log, 'utf8');
+  check('selection uses bounded brief JSON queries',
+    calls.includes('list --status in_progress --json --brief --limit 5')
+      && calls.includes('ready --json --brief --limit 5'), calls);
+  check('summary retains task ID, status, priority and title',
+    r.stdout.includes('- bweb-wip [in_progress, P0] In progress')
+      && r.stdout.includes('- bweb-1 [open, P0] Ready task 1'), r.stdout);
+  check('summary preserves order and caps tasks, not human output lines',
+    r.stdout.indexOf('bweb-1') < r.stdout.indexOf('bweb-5')
+      && r.stdout.includes('Ready task 5') && !r.stdout.includes('Ready task 6'), r.stdout);
+  check('selection does not inject full descriptions', !r.stdout.includes('Full description'), r.stdout);
+  check('selection requires full show and comments before work',
+    r.stdout.includes('bd show <ID> and bd comments <ID>'), r.stdout);
 }
 
 function testNudge() {

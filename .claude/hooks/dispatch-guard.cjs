@@ -72,7 +72,7 @@ function checkBlockers(beadId, epicId) {
     deny(
       `<blocked-task>\nCannot dispatch ${beadId} - unresolved blockers: ${blockers.join(', ')}\n\n` +
       'Complete blocking tasks first, then dispatch this one.\n\n' +
-      'Use: bd ready --json to see tasks with no blockers.\n</blocked-task>'
+      'Use: bd ready --json --brief to select a task, then bd show <ID> for full context.\n</blocked-task>'
     );
   }
 }
