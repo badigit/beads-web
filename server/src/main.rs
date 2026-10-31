@@ -11,6 +11,9 @@ mod process;
 mod project_sync;
 mod routes;
 
+#[cfg(test)]
+mod acceptance_preview;
+
 use axum::{
     body::Body,
     extract::Extension,

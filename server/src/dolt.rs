@@ -310,47 +310,19 @@ impl DoltManager {
         })
     }
 
-    /// Returns the issue prefix stored by `bd init`, falling back to the database name.
-    pub async fn issue_prefix(&self, db_name: &str) -> Result<String, DoltError> {
-        validate_database_name(db_name)?;
-        let mut conn = self
-            .pool
-            .get_conn()
-            .await
-            .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
-        let query = format!(
-            "SELECT value FROM `{}`.config WHERE `key` = 'issue_prefix' LIMIT 1",
-            db_name
-        );
-        let prefix: Option<String> = conn
-            .query_first(query)
-            .await
-            .map_err(|e| DoltError::QueryFailed(format!("issue_prefix: {}", e)))?;
-        Ok(prefix
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| {
-                db_name
-                    .strip_prefix("beads_")
-                    .unwrap_or(db_name)
-                    .to_string()
-            }))
-    }
-
     /// Creates through bd so parent links, events and blocked-state use its contract.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_bead(
         &self,
         db_name: &str,
-        id: &str,
         title: &str,
         description: Option<&str>,
         issue_type: &str,
         priority: i32,
         parent_id: Option<&str>,
-    ) -> Result<(), DoltError> {
+    ) -> Result<String, DoltError> {
         let mut args = vec![
             "create".to_string(),
-            format!("--id={id}"),
             format!("--title={title}"),
             format!("--description={}", text_or_empty(description)),
             format!("--type={issue_type}"),
@@ -364,12 +336,10 @@ impl DoltManager {
         let output = self.run_bd_mutation(db_name, &args).await?;
         let created: serde_json::Value = serde_json::from_str(&output)
             .map_err(|_| DoltError::QueryFailed("bd create returned invalid JSON".to_string()))?;
-        if created.get("id").and_then(|v| v.as_str()) != Some(id) {
-            return Err(DoltError::QueryFailed(
-                "bd create did not confirm the requested issue ID".to_string(),
-            ));
-        }
-        Ok(())
+        created.get("id").and_then(|v| v.as_str()).filter(|id| !id.is_empty())
+            .map(str::to_string).ok_or_else(|| DoltError::QueryFailed(
+                "bd create did not return an issue ID".to_string(),
+            ))
     }
 
     /// Updates through bd, including close/reopen and dependent-blocked-state repair.
@@ -522,6 +492,10 @@ fn mutation_command(
         .env("BEADS_DOLT_SERVER_HOST", &config.host)
         .env("BEADS_DOLT_SERVER_PORT", config.port.to_string())
         .env("BEADS_DOLT_SERVER_USER", &config.user)
+        .env_remove("BEADS_DOLT_SERVER_DATABASE")
+        .env_remove("BEADS_DB")
+        .env_remove("BD_DB")
+        .env_remove("BEADS_DOLT_CREDENTIAL_COMMAND")
         .env_remove("BEADS_DOLT_SERVER_SOCKET")
         .env_remove("BEADS_DOLT_SHARED_SERVER")
         .kill_on_drop(true);
@@ -1799,6 +1773,15 @@ mod tests {
             let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
             ids.push(body["id"].as_str().unwrap().to_string());
         }
+        let response = create_bead_handler(Extension(manager.clone()), Json(CreateBeadRequest {
+            path: path.clone(), title: "Nested task".to_string(), description: None,
+            issue_type: Some("task".to_string()), priority: Some(2), parent_id: Some(ids[1].clone()),
+        })).await.into_response();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        assert_eq!(status, axum::http::StatusCode::CREATED, "{}", String::from_utf8_lossy(&body));
+        let child: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(child["id"].as_str().unwrap().starts_with(&format!("{}.", ids[1])));
         manager.run_bd_mutation(&database, &[
             "dep".to_string(), "add".to_string(), ids[1].clone(), ids[0].clone(),
         ]).await.unwrap();
@@ -1865,6 +1848,10 @@ mod tests {
         assert_eq!(env.get(std::ffi::OsStr::new("BEADS_DOLT_SERVER_PORT")),
             Some(&Some(std::ffi::OsStr::new("3308"))));
         assert_eq!(env.get(std::ffi::OsStr::new("BEADS_DOLT_PASSWORD")), Some(&None));
+        assert_eq!(env.get(std::ffi::OsStr::new("BEADS_DOLT_SERVER_DATABASE")), Some(&None));
+        assert_eq!(env.get(std::ffi::OsStr::new("BEADS_DB")), Some(&None));
+        assert_eq!(env.get(std::ffi::OsStr::new("BD_DB")), Some(&None));
+        assert_eq!(env.get(std::ffi::OsStr::new("BEADS_DOLT_CREDENTIAL_COMMAND")), Some(&None));
     }
 
     /// Бид без описания раньше уходил в INSERT как NULL и падал на NOT NULL

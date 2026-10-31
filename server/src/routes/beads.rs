@@ -1114,7 +1114,7 @@ pub async fn create_bead_handler(
     let issue_type = req.issue_type.as_deref().unwrap_or("task");
     let priority = req.priority.unwrap_or(2).clamp(0, 4);
 
-    // Dolt-only path: insert via SQL
+    // bd owns ID allocation, parent links and lifecycle invariants for this database.
     if let Some(db_name) = req.path.strip_prefix(DOLT_PATH_PREFIX) {
         if !dolt_manager.is_available() && !dolt_manager.check_server().await {
             return (
@@ -1123,29 +1123,15 @@ pub async fn create_bead_handler(
             );
         }
 
-        // Use the issue prefix configured by `bd init`, not the database name.
-        let prefix = match dolt_manager.issue_prefix(db_name).await {
-            Ok(prefix) => prefix,
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": e.to_string() })),
-                );
-            }
-        };
-        let short_id = &uuid::Uuid::new_v4().simple().to_string()[..6];
-        let bead_id = format!("{}-{}", prefix, short_id);
-
         match dolt_manager.create_bead(
             db_name,
-            &bead_id,
             title,
             req.description.as_deref(),
             issue_type,
             priority,
             req.parent_id.as_deref(),
         ).await {
-            Ok(()) => {
+            Ok(bead_id) => {
                 return (
                     StatusCode::CREATED,
                     Json(serde_json::json!({ "id": bead_id })),

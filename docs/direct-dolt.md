@@ -11,6 +11,8 @@ Do not replace these commands with SQL updates: a Dolt commit alone does not run
 For a `dolt://` project, the server creates a temporary workspace that selects the existing database.
 It passes the configured connection and password to the child process without storing the password.
 Explicit `--repo=.` prevents contributor routing to another database.
+Beads allocates and returns the issue ID, including hierarchical IDs for child issues.
+Inherited database selectors and credential commands cannot override the chosen target or SQL identity.
 The context disables local exports, Git operations and automatic backups, then is removed after the command.
 It does not inherit another checkout's hooks or local settings. Global Beads settings still apply.
 The optional durable events journal must therefore be enabled globally to cover this path.
@@ -23,6 +25,11 @@ After a write timeout, reload the issue before retrying: the command may already
 The opt-in test `live_bd_mutations_preserve_blocked_state_and_lifecycle` exercises the actual CLI and HTTP handlers.
 Provision an isolated database, set `BEADS_WEB_TEST_DATABASE=bweb_tsw_verify_<unique>`, and run that ignored Cargo test.
 It verifies creation without a description, a blocking dependency, close/reopen fields and failed writes.
+It also creates a child issue and can run with deliberately invalid inherited database selectors.
+
+For browser acceptance, `preview_isolated_board` serves the embedded frontend and real API handlers for 180 seconds.
+It binds loopback, requires `BEADS_WEB_PREVIEW_PORT`, and keeps the project registry in memory.
+It requires the same disposable database and does not start the production instance or project discovery.
 
 ## Build
 
