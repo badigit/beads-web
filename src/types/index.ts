@@ -64,14 +64,21 @@ export interface Tag {
 /**
  * Bead status types (the 4 kanban columns)
  */
-export type BeadStatus = 'open' | 'in_progress' | 'inreview' | 'closed';
+export type BuiltinBeadStatus = 'open' | 'in_progress' | 'inreview' | 'closed';
+export type BeadStatus = BuiltinBeadStatus | (string & {});
+
+/** Categories belong to bd; the UI does not maintain a second workflow. */
+export interface CustomStatus {
+  name: string;
+  category: 'active' | 'wip' | 'done' | 'frozen' | 'unspecified';
+}
 
 /**
  * All known statuses from the Beads CLI (bd v0.47.0+).
  * The backend can send any of these; they get mapped to BeadStatus columns.
  */
 export type KnownRawStatus =
-  | BeadStatus
+  | BuiltinBeadStatus
   | 'blocked'
   | 'deferred'
   | 'tombstone'
@@ -139,6 +146,7 @@ export interface Bead {
   labels?: string[];          // Labels from the flat (issue_id, label) link table
   // Status mapping fields (set by beads-parser when raw status differs from column)
   _originalStatus?: string;   // The raw status from the backend before mapping
+  _statusCategory?: CustomStatus['category']; // bd-owned category for a custom stage
   _statusBadge?: StatusBadgeInfo; // Badge info if the bead was mapped to a different column
 }
 

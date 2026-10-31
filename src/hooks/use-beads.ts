@@ -27,7 +27,7 @@ import {
   groupBeadsByStatus,
   assignTicketNumbers,
 } from "@/lib/beads-parser";
-import type { Bead, BeadStatus } from "@/types";
+import type { Bead, BeadStatus, CustomStatus } from "@/types";
 
 /** Options for a (re)load of the bead set. */
 export interface RefreshOptions {
@@ -46,6 +46,8 @@ export interface RefreshOptions {
  * Result type for the useBeads hook
  */
 export interface UseBeadsResult {
+  customStatuses?: CustomStatus[];
+  statusesError?: string | null;
   /** Array of all beads from the project */
   beads: Bead[];
   /** Beads grouped by status for kanban columns */
@@ -64,6 +66,8 @@ export interface UseBeadsResult {
 
 /** The three views the hook exposes; always derived together. */
 interface BeadsState {
+  customStatuses?: CustomStatus[];
+  statusesError?: string | null;
   beads: Bead[];
   beadsByStatus: Record<BeadStatus, Bead[]>;
   ticketNumbers: Map<string, number>;
@@ -135,7 +139,7 @@ export function useBeads(projectPath: string): UseBeadsResult {
   // project change — so a revisited project paints without a spinner frame.
   if (seededPath !== projectPath) {
     const cached = getCachedBeads(projectPath);
-    const seeded = cached ? deriveState(cached.beads) : EMPTY_STATE;
+    const seeded = cached ? { ...deriveState(cached.beads), customStatuses: cached.customStatuses, statusesError: cached.statusesError } : EMPTY_STATE;
 
     beadsRef.current = seeded.beads;
     hasLoadedRef.current = Boolean(cached);
@@ -187,13 +191,16 @@ export function useBeads(projectPath: string): UseBeadsResult {
       const updatedAfter = incremental ? lastUpdatedRef.current ?? undefined : undefined;
 
       try {
-        const fetched = await loadProjectBeads(projectPath, { updatedAfter });
+        const result = await loadProjectBeads(projectPath, { updatedAfter, withSource: true });
+        const fetched = result.beads;
         const nextBeads = incremental ? mergeBeads(beadsRef.current, fetched) : fetched;
         const nextCursor = maxUpdatedAt(fetched, lastUpdatedRef.current);
         const fullFetchAt = incremental ? lastFullFetchAtRef.current : Date.now();
 
         setCachedBeads(projectPath, {
           beads: nextBeads,
+          customStatuses: result.customStatuses,
+          statusesError: result.statusesError,
           lastUpdatedAt: nextCursor,
           lastFullFetchAt: fullFetchAt,
         });
@@ -204,7 +211,7 @@ export function useBeads(projectPath: string): UseBeadsResult {
           lastUpdatedRef.current = nextCursor;
           lastFullFetchAtRef.current = fullFetchAt;
           beadsRef.current = nextBeads;
-          setState(deriveState(nextBeads));
+          setState({ ...deriveState(nextBeads), customStatuses: result.customStatuses, statusesError: result.statusesError });
           setError(null);
           hasLoadedRef.current = true;
         }
@@ -280,6 +287,8 @@ export function useBeads(projectPath: string): UseBeadsResult {
   useDoltWatcher(projectPath, revalidate);
 
   return {
+    customStatuses: state.customStatuses,
+    statusesError: state.statusesError,
     beads: state.beads,
     beadsByStatus: state.beadsByStatus,
     ticketNumbers: state.ticketNumbers,

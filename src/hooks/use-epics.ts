@@ -12,6 +12,7 @@
 
 import { useMemo, useState, useCallback } from "react";
 
+import { isBlocked, isDone, isWorkInProgress } from '@/lib/bead-utils';
 import type { Bead, Epic, EpicProgress } from "@/types";
 
 /**
@@ -39,12 +40,12 @@ export interface UseEpicsResult {
 /**
  * Compute progress metrics for an epic based on its children
  */
-function computeEpicProgress(children: Bead[]): EpicProgress {
+function computeEpicProgress(children: Bead[], allBeads: Bead[]): EpicProgress {
   const total = children.length;
-  const completed = children.filter(c => c.status === 'closed').length;
-  const inProgress = children.filter(c => c.status === 'in_progress').length;
+  const completed = children.filter(isDone).length;
+  const inProgress = children.filter(isWorkInProgress).length;
   // Blocked = has unresolved dependencies
-  const blocked = children.filter(c => (c.deps?.length ?? 0) > 0).length;
+  const blocked = children.filter(c => isBlocked(c, allBeads)).length;
 
   return { total, completed, inProgress, blocked };
 }
@@ -107,7 +108,7 @@ export function useEpics(beads: Bead[]): UseEpicsResult {
           .filter((b): b is Bead => b !== undefined);
 
         // Compute progress
-        const progress = computeEpicProgress(children);
+        const progress = computeEpicProgress(children, beads);
 
         epicsList.push({
           ...bead,

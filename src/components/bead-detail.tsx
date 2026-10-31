@@ -33,6 +33,7 @@ import {
   getStatusBadgeClasses,
   getStatusBadgeText,
   getStatusDotColor,
+  isDone,
 } from "@/lib/bead-utils";
 import { updateTitle, updateDescription, updateStatus as cliUpdateStatus } from "@/lib/cli";
 import { isDesignDocPath } from "@/lib/design-doc";
@@ -162,7 +163,7 @@ export function BeadDetail({
     if (!prEnabled || !projectPath || isDoltProject(projectPath) || childTasks.length === 0) return;
 
     const results = await Promise.all(
-      childTasks.filter(c => c.status !== 'closed').map(async (child) => {
+      childTasks.filter(c => !isDone(c)).map(async (child) => {
         try {
           const prStatus = await api.git.prStatus(projectPath, child.id);
           if (prStatus.pr) {
@@ -266,7 +267,7 @@ export function BeadDetail({
             {bead.issue_type !== "epic" && hasWorktree && worktreeStatus?.worktree_path && (
               <div className={cn(
                 "font-mono text-xs text-t-muted",
-                bead.status === "closed" && "opacity-40"
+                isDone(bead) && "opacity-40"
               )}>
                 {formatWorktreePath(worktreeStatus.worktree_path)}
               </div>
@@ -411,7 +412,7 @@ export function BeadDetail({
                       </span>
                       <span className={cn(
                         "text-xs font-medium flex-1 min-w-0 truncate group-hover:underline",
-                        related.status === "closed" ? "line-through text-t-muted" : "text-t-secondary"
+                        isDone(related) ? "line-through text-t-muted" : "text-t-secondary"
                       )}>
                         {related.title}
                       </span>

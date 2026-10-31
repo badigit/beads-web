@@ -192,6 +192,17 @@ impl DoltManager {
         Ok(beads)
     }
 
+    /// Reads workflow definitions owned by bd, including configured empty stages.
+    pub async fn read_custom_statuses(
+        &self,
+        db_name: &str,
+    ) -> Result<Vec<(String, String)>, DoltError> {
+        validate_database_name(db_name)?;
+        let mut conn = self.pool.get_conn().await
+            .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+        query_custom_statuses(&mut conn, db_name).await
+    }
+
     /// Aggregates issues per raw status without transferring any issue rows.
     ///
     /// This is the cheap counterpart of [`read_beads`](Self::read_beads) used by
@@ -1151,6 +1162,38 @@ pub async fn count_labels_on_port(
         tracing::warn!("Failed to disconnect temporary pool (port {}): {}", port, e);
     }
 
+    result
+}
+
+async fn query_custom_statuses(
+    conn: &mut mysql_async::Conn,
+    db_name: &str,
+) -> Result<Vec<(String, String)>, DoltError> {
+    validate_database_name(db_name)?;
+    ensure_database_exists(conn, db_name).await?;
+    let exists: Option<i64> = conn.exec_first(
+        "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = :db AND TABLE_NAME = 'custom_statuses'",
+        mysql_async::params! { "db" => db_name },
+    ).await.map_err(|e| DoltError::QueryFailed(e.to_string()))?;
+    if exists == Some(0) {
+        return Ok(Vec::new());
+    }
+    conn.query(format!("SELECT name, category FROM `{}`.custom_statuses ORDER BY name", db_name))
+        .await.map_err(|e| DoltError::QueryFailed(e.to_string()))
+}
+
+pub async fn read_custom_statuses_on_port(
+    port: u16,
+    db_name: &str,
+) -> Result<Vec<(String, String)>, DoltError> {
+    let config = DoltConnectConfig::from_env();
+    let pool_opts = PoolOpts::default().with_constraints(PoolConstraints::new(0, 2).unwrap());
+    let pool = Pool::new(config.build_opts(Some(port), pool_opts));
+    let mut conn = pool.get_conn().await
+        .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+    let result = query_custom_statuses(&mut conn, db_name).await;
+    drop(conn);
+    let _ = pool.disconnect().await;
     result
 }
 

@@ -13,6 +13,7 @@ import {
   getStatusBadgeText,
   isBlocked,
   isDeferred,
+  isDone,
   truncate,
 } from "@/lib/bead-utils";
 import { cn } from "@/lib/utils";
@@ -204,7 +205,7 @@ export function BeadCard({ bead, allBeads, ticketNumber, worktreeStatus, prStatu
     </span>
   );
 
-  const isClosed = bead.status === 'closed';
+  const isClosed = isDone(bead);
 
   // Status badge for beads whose raw status has no column of its own
   // (deferred, blocked, hooked, unknown). A blocked bead already carries the

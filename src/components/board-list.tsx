@@ -4,7 +4,7 @@ import { CornerDownRight, PackageOpen } from "lucide-react";
 
 import { CopyableText } from "@/components/copyable-text";
 import { LabelChips } from "@/components/label-chips";
-import { formatStatus, getStatusDotColor, isBlocked, truncate } from "@/lib/bead-utils";
+import { formatStatus, getStatusDotColor, isBlocked, isDone, truncate } from "@/lib/bead-utils";
 import { cn } from "@/lib/utils";
 import type { Bead } from "@/types";
 
@@ -48,7 +48,7 @@ export function BoardListRow({
   onSelect,
 }: BoardListRowProps) {
   const blocked = isBlocked(bead, allBeads);
-  const isClosed = bead.status === "closed";
+  const isClosed = isDone(bead);
   const statusLabel = formatStatus(bead.status);
 
   return (

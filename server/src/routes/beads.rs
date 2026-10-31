@@ -666,7 +666,8 @@ pub async fn read_beads(
             Ok(beads) => {
                 let beads = post_process_beads(beads);
                 upsert_counts_cache(&db, &path, "dolt-direct", &counts_from_beads(&beads));
-                (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": "dolt-direct" })))
+                let (custom_statuses, custom_statuses_error) = read_status_metadata(&dolt_manager, &path).await;
+                (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": "dolt-direct", "custom_statuses": custom_statuses, "custom_statuses_error": custom_statuses_error })))
             }
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -687,10 +688,48 @@ pub async fn read_beads(
     {
         Ok(BeadsRead { beads, source }) => {
             upsert_counts_cache(&db, &path, source, &counts_from_beads(&beads));
-            (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": source })))
+            let (custom_statuses, custom_statuses_error) = read_status_metadata(&dolt_manager, &path).await;
+            (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": source, "custom_statuses": custom_statuses, "custom_statuses_error": custom_statuses_error })))
         }
         Err(err) => err,
     }
+}
+
+/// Add workflow metadata to the existing read surface; no separate workflow owner or route.
+async fn read_status_metadata(manager: &DoltManager, path: &str) -> (Vec<serde_json::Value>, Option<String>) {
+    match resolve_status_metadata(manager, path).await {
+        Ok(statuses) => (statuses, None),
+        Err(error) => {
+            tracing::warn!("Cannot read status categories: {}", error);
+            (Vec::new(), Some("Status categories unavailable".to_string()))
+        }
+    }
+}
+
+async fn resolve_status_metadata(manager: &DoltManager, path: &str) -> Result<Vec<serde_json::Value>, String> {
+    let rows = if let Some(db) = path.strip_prefix(DOLT_PATH_PREFIX) {
+        manager.read_custom_statuses(db).await
+    } else {
+        let project = PathBuf::from(path);
+        let beads_dir = resolve_beads_dir(&project).map_err(|_| "Invalid project path".to_string())?;
+        if let Some((port, db)) = resolve_project_dolt(&beads_dir, &project).await {
+            dolt::read_custom_statuses_on_port(port, &db).await
+        } else if let Some(db) = dolt::database_name_for_project(&project) {
+            manager.read_custom_statuses(&db).await
+        } else {
+            let output = tokio::time::timeout(Duration::from_secs(30),
+                hidden_command(super::bd_command_path()).args(["statuses", "--json"])
+                    .current_dir(&project).output()).await
+                .map_err(|_| "bd statuses timed out".to_string())?
+                .map_err(|e| e.to_string())?;
+            if !output.status.success() {
+                return Err("bd statuses failed".to_string());
+            }
+            let data: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+            return Ok(data.get("custom_statuses").and_then(|v| v.as_array()).cloned().unwrap_or_default());
+        }
+    }.map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().map(|(name, category)| serde_json::json!({ "name": name, "category": category })).collect())
 }
 
 /// Error response returned by the shared bead-source helpers.

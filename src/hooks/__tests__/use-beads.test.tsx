@@ -19,7 +19,12 @@ vi.mock('@/lib/beads-parser', async () => {
   );
   return {
     ...actual,
-    loadProjectBeads: (...args: unknown[]) => loadProjectBeadsMock(...args),
+    loadProjectBeads: async (...args: unknown[]) => {
+      const result = await loadProjectBeadsMock(...args);
+      return (args[1] as { withSource?: boolean })?.withSource && Array.isArray(result)
+        ? { beads: result }
+        : result;
+    },
   };
 });
 
@@ -71,6 +76,21 @@ afterEach(() => {
 });
 
 describe('useBeads — cold start (cache miss)', () => {
+  it('carries bd stage categories into the rendered state and revisit cache', async () => {
+    loadProjectBeadsMock.mockResolvedValue({
+      beads: [bead('a-1', { status: 'qa' })],
+      customStatuses: [{ name: 'qa', category: 'wip' }],
+    });
+    const { result, unmount } = renderHook(() => useBeads('/stages'));
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.customStatuses).toEqual([{ name: 'qa', category: 'wip' }]);
+    expect(result.current.beadsByStatus.qa[0].id).toBe('a-1');
+    expect(getCachedBeads('/stages')?.customStatuses).toEqual([{ name: 'qa', category: 'wip' }]);
+    unmount();
+    const revisited = renderHook(() => useBeads('/stages'));
+    expect(revisited.result.current.customStatuses).toEqual([{ name: 'qa', category: 'wip' }]);
+  });
+
   it('shows the loading state and does a full fetch', async () => {
     loadProjectBeadsMock.mockResolvedValue([bead('a-1')]);
 

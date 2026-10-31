@@ -22,7 +22,6 @@ describe('formatStatus', () => {
   });
 
   it('returns unknown status as-is', () => {
-    // @ts-expect-error testing unknown status
     expect(formatStatus('unknown')).toBe('unknown');
   });
 });

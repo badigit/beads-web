@@ -27,6 +27,8 @@ export const MAX_CACHED_PROJECTS = 12;
 
 /** Everything the hook needs to resume a project without a cold load. */
 export interface BeadsCacheEntry {
+  customStatuses?: import('@/types').CustomStatus[];
+  statusesError?: string | null;
   /** Full bead set as last known for this project. */
   beads: Bead[];
   /** Newest `updated_at` seen so far — the cursor for incremental fetches. */

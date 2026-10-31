@@ -3,7 +3,7 @@
 import { Check, Circle, Clock, FileCheck, GitPullRequest, GitMerge } from "lucide-react";
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { isDeferred, truncate } from "@/lib/bead-utils";
+import { isDeferred, isDone, truncate } from "@/lib/bead-utils";
 import { cn } from "@/lib/utils";
 import type { Bead, BeadStatus } from "@/types";
 
@@ -188,14 +188,14 @@ export function SubtaskList({
           )}
         >
           <div className="flex items-center gap-1 flex-shrink-0 mt-0.5">
-            {getStatusIcon(child.status)}
+            {getStatusIcon(isDone(child) ? 'closed' : child.status)}
             <PRStatusIcon prStatus={childPRStatuses?.get(child.id)} />
           </div>
           <div className="flex-1 min-w-0">
             <p className={cn(
               "text-[11px] font-medium leading-tight group-hover:underline",
-              child.status === 'closed' && "line-through text-t-muted",
-              child.status !== 'closed' && "text-t-secondary",
+              isDone(child) && "line-through text-t-muted",
+              !isDone(child) && "text-t-secondary",
               // Deferred children sit among live ones in the same list (bweb-8md).
               isDeferred(child) && "italic text-t-muted"
             )}>

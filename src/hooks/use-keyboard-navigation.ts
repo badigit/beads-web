@@ -5,11 +5,6 @@ import { useCallback, useEffect, useState, RefObject } from "react";
 import type { Bead, BeadStatus } from "@/types";
 
 /**
- * Column order for navigation
- */
-const COLUMN_ORDER: BeadStatus[] = ["open", "in_progress", "inreview", "closed"];
-
-/**
  * Column shortcuts for 'g' prefix navigation
  */
 const COLUMN_SHORTCUTS: Record<string, BeadStatus> = {
@@ -80,7 +75,7 @@ export function useKeyboardNavigation({
     }
     if (!internalSelectedId) {
       // Default to first non-empty column
-      for (const status of COLUMN_ORDER) {
+      for (const status of Object.keys(beadsByStatus)) {
         if (beadsByStatus[status]?.length > 0) {
           return beadsByStatus[status];
         }
@@ -88,7 +83,7 @@ export function useKeyboardNavigation({
       return [];
     }
     // Find which column contains the selected bead
-    for (const status of COLUMN_ORDER) {
+    for (const status of Object.keys(beadsByStatus)) {
       const columnBeads = beadsByStatus[status] || [];
       if (columnBeads.some((b) => b.id === internalSelectedId)) {
         return columnBeads;
@@ -132,7 +127,7 @@ export function useKeyboardNavigation({
         setInternalSelectedId(newBead.id);
         onSelect(newBead);
         // Update column status based on selected bead
-        for (const status of COLUMN_ORDER) {
+        for (const status of Object.keys(beadsByStatus)) {
           if (beadsByStatus[status]?.some((b) => b.id === newBead.id)) {
             setSelectedColumnStatus(status);
             break;

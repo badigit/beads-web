@@ -40,6 +40,11 @@ export const BeadSchema = z.object({
 export const BeadsResponseSchema = z.object({
   beads: z.array(BeadSchema),
   source: z.string().optional(),
+  custom_statuses: z.array(z.object({
+    name: z.string().min(1),
+    category: z.enum(['active', 'wip', 'done', 'frozen', 'unspecified']),
+  })).optional(),
+  custom_statuses_error: z.string().nullish(),
 });
 
 /**

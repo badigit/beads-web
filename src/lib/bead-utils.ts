@@ -171,16 +171,24 @@ export function truncate(text: string, maxLength: number): string {
  * @param allBeads - All beads available for dep resolution. Pass the
  *   full board state — `deps` lookup is O(deps.length) over a Map.
  */
+export function isDone(bead: { status: string; _statusCategory?: string }): boolean {
+  return bead._statusCategory === 'done' || (!bead._statusCategory && bead.status === 'closed');
+}
+
+export function isWorkInProgress(bead: { status: string; _statusCategory?: string }): boolean {
+  return bead._statusCategory === 'wip' || (!bead._statusCategory && bead.status === 'in_progress');
+}
+
 export function isBlocked(
-  bead: { status: string; deps?: string[] | null },
-  allBeads: ReadonlyArray<{ id: string; status: string }>,
+  bead: { status: string; deps?: string[] | null; _statusCategory?: string },
+  allBeads: ReadonlyArray<{ id: string; status: string; _statusCategory?: string }>,
 ): boolean {
-  if (bead.status === "closed") return false;
+  if (isDone(bead)) return false;
   const deps = bead.deps ?? [];
   if (deps.length === 0) return false;
-  const statusById = new Map(allBeads.map((b) => [b.id, b.status]));
+  const statusById = new Map(allBeads.map((b) => [b.id, b]));
   return deps.some((depId) => {
     const status = statusById.get(depId);
-    return status !== undefined && status !== "closed";
+    return status !== undefined && !isDone(status);
   });
 }

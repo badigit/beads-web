@@ -17,6 +17,7 @@ import { CreateBeadDialog } from "@/components/create-bead-dialog";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { KanbanColumn } from "@/components/kanban-column";
 import { MemoryPanel } from "@/components/memory-panel";
+import { PipelineStrip } from "@/components/pipeline-strip";
 import { ProjectSettingsDialog } from "@/components/project-settings-dialog";
 import { QuickFilterBar } from "@/components/quick-filter-bar";
 import {
@@ -42,23 +43,15 @@ import { useProject } from "@/hooks/use-project";
 import { useTheme } from "@/hooks/use-theme";
 import { useWorktreeStatuses } from "@/hooks/use-worktree-statuses";
 import { parseBeadIdParam } from "@/lib/bead-link";
-import { isBlocked } from "@/lib/bead-utils";
+import { isBlocked, isDone } from "@/lib/bead-utils";
 import { getUnknownStatusBeads, getUnknownStatusNames } from "@/lib/beads-parser";
 import { isFlatSearchMode, selectBoardBeads, selectListBeads, type IssueTypeFilter } from "@/lib/board-beads";
 import { clearLabelFilter, cycleLabelFilter } from "@/lib/label-filter";
+import { buildPipelineStages } from "@/lib/pipeline-stages";
 import { isDoltProject } from "@/lib/utils";
-import type { Bead, BeadStatus } from "@/types";
+import type { Bead, BeadStatus, CustomStatus } from "@/types";
 
-/**
- * Column configuration for the Kanban board
- * Note: Cancelled status is hidden per requirements
- */
-const COLUMNS: { status: BeadStatus; title: string }[] = [
-  { status: "open", title: "Open" },
-  { status: "in_progress", title: "In Progress" },
-  { status: "inreview", title: "In Review" },
-  { status: "closed", title: "Closed" },
-];
+const EMPTY_CUSTOM_STATUSES: CustomStatus[] = [];
 
 /**
  * Kanban / list view toggle for the board header.
@@ -130,7 +123,12 @@ export default function KanbanBoard() {
     isRevalidating: beadsRevalidating,
     error: beadsError,
     refresh: refreshBeads,
+    customStatuses: loadedCustomStatuses,
+    statusesError,
   } = useBeads(project?.path ?? "");
+
+  const customStatuses = loadedCustomStatuses ?? EMPTY_CUSTOM_STATUSES;
+  const stages = useMemo(() => buildPipelineStages(beads, customStatuses), [beads, customStatuses]);
 
   // Use the bead filters hook with 300ms debounce
   const {
@@ -234,7 +232,7 @@ export default function KanbanBoard() {
   }, [filters.labels, filters.excludeLabels, setFilters]);
 
   // Filter out closed beads to avoid unnecessary polling for finalized tasks
-  const beadIds = useMemo(() => beads.filter(b => b.status !== 'closed').map(b => b.id), [beads]);
+  const beadIds = useMemo(() => beads.filter(b => !isDone(b)).map(b => b.id), [beads]);
 
   // Worktree statuses for PR workflow (skip for dolt-only projects and when
   // PR integration is disabled — no local/remote git fan-out in that case)
@@ -247,7 +245,7 @@ export default function KanbanBoard() {
   // Flat search mode: while a search is active, matches at any depth get their
   // own card (see selectBoardBeads). Keyed off the debounced term so the mode
   // flips in sync with the filtering itself, not with the raw input.
-  const flatSearch = isFlatSearchMode(debouncedSearch);
+  const flatSearch = isFlatSearchMode(debouncedSearch) || filters.statuses.length > 0;
 
   /**
    * Beads that get their own card on the board.
@@ -255,8 +253,8 @@ export default function KanbanBoard() {
    * Active search -> every match, at any depth (bweb-emj).
    */
   const topLevelBeads = useMemo(
-    () => selectBoardBeads(filteredBeads, typeFilter, debouncedSearch),
-    [filteredBeads, typeFilter, debouncedSearch]
+    () => selectBoardBeads(filteredBeads, typeFilter, flatSearch ? '*' : ''),
+    [filteredBeads, typeFilter, flatSearch]
   );
 
   /**
@@ -274,15 +272,14 @@ export default function KanbanBoard() {
    * Defensive: falls back to 'open' for any status not in the 4 columns.
    */
   const filteredBeadsByStatus = useMemo(() => {
-    const grouped: Record<BeadStatus, Bead[]> = {
+    const grouped: Record<BeadStatus, Bead[]> = Object.assign(Object.create(null), {
       open: [],
       in_progress: [],
       inreview: [],
       closed: [],
-    };
+    });
     for (const bead of topLevelBeads) {
-      const column = grouped[bead.status] ? bead.status : 'open';
-      grouped[column].push(bead);
+      (grouped[bead.status] ??= []).push(bead);
     }
     return grouped;
   }, [topLevelBeads]);
@@ -290,8 +287,9 @@ export default function KanbanBoard() {
   /**
    * Detect beads with truly unknown statuses for the warning indicator.
    */
-  const unknownStatusBeads = useMemo(() => getUnknownStatusBeads(beads), [beads]);
-  const unknownStatusNames = useMemo(() => getUnknownStatusNames(beads), [beads]);
+  const unknownStatusBeads = useMemo(() => getUnknownStatusBeads(beads).filter(
+    bead => !customStatuses.some(status => status.name === bead.status)), [beads, customStatuses]);
+  const unknownStatusNames = useMemo(() => getUnknownStatusNames(unknownStatusBeads), [unknownStatusBeads]);
 
   // Detail panel state
   const {
@@ -492,6 +490,9 @@ export default function KanbanBoard() {
         />
       </div>
 
+      <PipelineStrip stages={stages} selected={filters.statuses} onSelect={toggleStatus} />
+      {statusesError && <p role="status" className="px-4 pb-2 text-xs text-t-muted">Stage categories unavailable. Observed stages are still shown.</p>}
+
       {/* Board — kanban columns or dense flat list */}
       <main className="flex-1 overflow-hidden p-4">
         {beadsLoading ? (
@@ -511,8 +512,8 @@ export default function KanbanBoard() {
             onSelectBead={openBead}
           />
         ) : (
-          <div className="grid grid-cols-4 h-full" style={{ gap: 'var(--column-gap)' }}>
-            {COLUMNS.map(({ status, title }) => (
+          <div className="grid h-full overflow-x-auto" style={{ gap: 'var(--column-gap)', gridTemplateColumns: `repeat(${stages.length}, minmax(260px, 1fr))` }}>
+            {stages.map(({ status, title }) => (
               <KanbanColumn
                 key={status}
                 status={status}

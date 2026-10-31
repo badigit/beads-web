@@ -15,7 +15,7 @@ import { Progress } from "@/components/ui/progress";
 import { usePRSettings } from "@/hooks/use-pr-settings";
 import { useTheme } from "@/hooks/use-theme";
 import * as api from "@/lib/api";
-import { DEFERRED_CARD_CLASSES, getStatusBadgeClasses, getStatusBadgeText, isBlocked, isDeferred, truncate } from "@/lib/bead-utils";
+import { DEFERRED_CARD_CLASSES, getStatusBadgeClasses, getStatusBadgeText, isBlocked, isDeferred, isDone, truncate } from "@/lib/bead-utils";
 import { closeBead } from "@/lib/cli";
 import { isDesignDocPath } from "@/lib/design-doc";
 import { computeEpicProgress } from "@/lib/epic-parser";
@@ -108,7 +108,7 @@ export function EpicCard({
 
     // Fetch PR status for all children in parallel (skip closed - no PR needed)
     const results = await Promise.all(
-      children.filter(c => c.status !== 'closed').map(async (child) => {
+      children.filter(c => !isDone(c)).map(async (child) => {
         try {
           const prStatus = await api.git.prStatus(projectPath, child.id);
           if (prStatus.pr) {

@@ -7,6 +7,8 @@
 
 import type { Bead, Epic, EpicProgress } from "@/types";
 
+import { isDone, isWorkInProgress } from './bead-utils';
+
 /**
  * Separates epics from standalone tasks
  *
@@ -135,11 +137,12 @@ export function computeEpicProgress(epic: Epic, allBeads: Bead[]): EpicProgress 
     .filter((child): child is Bead => child !== undefined);
 
   // Count statuses
-  const completed = children.filter((c) => c.status === 'closed').length;
-  const inProgress = children.filter((c) => c.status === 'in_progress').length;
+  const completed = children.filter(isDone).length;
+  const inProgress = children.filter(isWorkInProgress).length;
 
   // Count blocked children (those with unresolved deps)
   const blocked = children.filter((child) => {
+    if (isDone(child)) return false;
     if (!child.deps || child.deps.length === 0) {
       return false;
     }
@@ -147,7 +150,7 @@ export function computeEpicProgress(epic: Epic, allBeads: Bead[]): EpicProgress 
     // Check if any dependency is not yet completed
     return child.deps.some((depId) => {
       const depBead = beadMap.get(depId);
-      return depBead && depBead.status !== 'closed';
+      return depBead && !isDone(depBead);
     });
   }).length;
 
@@ -187,6 +190,7 @@ export function getBlockedTasks(beads: Bead[]): Bead[] {
 
   // Filter beads with unresolved dependencies
   return beads.filter((bead) => {
+    if (isDone(bead)) return false;
     if (!bead.deps || bead.deps.length === 0) {
       return false;
     }
@@ -195,7 +199,7 @@ export function getBlockedTasks(beads: Bead[]): Bead[] {
     return bead.deps.some((depId) => {
       const depBead = beadMap.get(depId);
       // Blocked if dependency exists and is not closed
-      return depBead && depBead.status !== 'closed';
+      return depBead && !isDone(depBead);
     });
   });
 }

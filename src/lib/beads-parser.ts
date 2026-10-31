@@ -5,16 +5,17 @@
  * common operations.
  */
 
-import type { Bead, BeadStatus, Epic, KnownRawStatus } from "@/types";
+import type { Bead, BeadStatus, CustomStatus, Epic, KnownRawStatus } from "@/types";
 import { STATUS_MAP } from "@/types";
 
 import * as api from './api';
+import { isDone } from './bead-utils';
 
 /**
  * Check if a raw status string is a known status in the STATUS_MAP
  */
 function isKnownStatus(status: string): status is KnownRawStatus {
-  return status in STATUS_MAP;
+  return Object.prototype.hasOwnProperty.call(STATUS_MAP, status);
 }
 
 /**
@@ -23,10 +24,12 @@ function isKnownStatus(status: string): status is KnownRawStatus {
  *
  * Returns null for tombstone beads (should be filtered out).
  * Returns the bead with mapped status for known statuses.
- * Returns the bead mapped to 'open' with _originalStatus for unknown statuses.
+ * Unknown statuses retain their name and get a separate board stage.
  */
-function mapBeadStatus(bead: Bead): Bead | null {
+function mapBeadStatus(bead: Bead, custom?: CustomStatus): Bead | null {
   const rawStatus = bead.status as string;
+
+  if (custom) return { ...bead, _statusCategory: custom.category, _originalStatus: rawStatus, _statusBadge: { label: rawStatus, variant: 'info' } };
 
   // Known status — look up mapping
   if (isKnownStatus(rawStatus)) {
@@ -49,10 +52,10 @@ function mapBeadStatus(bead: Bead): Bead | null {
     };
   }
 
-  // Unknown status — map to open column with original status preserved
+  // Unknown/custom status — preserve the name for a separate board stage.
   return {
     ...bead,
-    status: 'open' as BeadStatus,
+    status: rawStatus,
     _originalStatus: rawStatus,
     _statusBadge: { label: rawStatus, variant: 'warning' },
   };
@@ -107,23 +110,26 @@ export function getUnknownStatusNames(beads: Bead[]): string[] {
 export interface LoadProjectBeadsResult {
   beads: Bead[];
   source?: string;
+  customStatuses?: CustomStatus[];
+  statusesError?: string | null;
 }
 
 export async function loadProjectBeads(projectPath: string, options?: { updatedAfter?: string }): Promise<Bead[]>;
 export async function loadProjectBeads(projectPath: string, options: { withSource: true; updatedAfter?: string }): Promise<LoadProjectBeadsResult>;
 export async function loadProjectBeads(projectPath: string, options?: { withSource?: true; updatedAfter?: string }): Promise<Bead[] | LoadProjectBeadsResult> {
   const result = await api.beads.read(projectPath, options?.updatedAfter);
+  const customStatuses = new Map(result.custom_statuses?.map(status => [status.name, status]));
   // Map statuses, filter tombstones, ensure comments array
   const mapped: Bead[] = [];
   for (const bead of result.beads) {
     const withComments = { ...bead, comments: bead.comments ?? [] };
-    const mappedBead = mapBeadStatus(withComments);
+    const mappedBead = mapBeadStatus(withComments, customStatuses.get(bead.status));
     if (mappedBead !== null) {
       mapped.push(mappedBead);
     }
   }
   if (options?.withSource) {
-    return { beads: mapped, source: result.source };
+    return { beads: mapped, source: result.source, customStatuses: result.custom_statuses ?? [], statusesError: result.custom_statuses_error };
   }
   return mapped;
 }
@@ -154,17 +160,15 @@ export async function parseBeadsFromPath(projectPath: string): Promise<Bead[]> {
  * ```
  */
 export function groupBeadsByStatus(beads: Bead[]): Record<BeadStatus, Bead[]> {
-  const grouped: Record<BeadStatus, Bead[]> = {
+  const grouped: Record<BeadStatus, Bead[]> = Object.assign(Object.create(null), {
     open: [],
     in_progress: [],
     inreview: [],
     closed: [],
-  };
+  });
 
   for (const bead of beads) {
-    // Defensive: if status is somehow not one of the 4 columns, fall back to open
-    const column = grouped[bead.status] ? bead.status : 'open';
-    grouped[column].push(bead);
+    (grouped[bead.status] ??= []).push(bead);
   }
 
   // Sort each group by updated_at descending (most recent first)
@@ -350,5 +354,5 @@ export function isEpicCompleted(epic: Epic, beads: Bead[]): boolean {
   }
 
   // All children must be closed
-  return children.every((child) => child.status === 'closed');
+  return children.every(isDone);
 }
