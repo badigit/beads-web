@@ -381,7 +381,7 @@ pub struct BeadCounts {
 /// The kanban column a raw `bd` status belongs to, or `None` when the bead is
 /// hidden from the board entirely.
 ///
-/// Built-in aliases retain the legacy four-bucket summary projection.
+/// Unconfigured aliases retain the legacy four-bucket summary projection.
 fn status_column(raw_status: &str) -> Option<&'static str> {
     status_summary_column(raw_status, None)
 }
@@ -390,17 +390,26 @@ fn status_column(raw_status: &str) -> Option<&'static str> {
 /// Frozen, unspecified and unregistered custom stages remain in Open: the
 /// four-bucket summary has no parked-work bucket and must not call them done.
 pub(crate) fn status_summary_column(raw_status: &str, category: Option<&str>) -> Option<&'static str> {
+    // Only these seven names are reserved by bd. Other legacy UI aliases can
+    // also be configured custom stages, in which case bd's category wins.
+    let reserved = matches!(raw_status,
+        "open" | "in_progress" | "blocked" | "deferred" | "closed" | "pinned" | "hooked");
+    if !reserved {
+        if let Some(category) = category {
+            return Some(match category {
+                "wip" => "in_progress",
+                "done" => "closed",
+                _ => "open",
+            });
+        }
+    }
     match raw_status {
         "tombstone" => None,
         "in_progress" | "hooked" => Some("in_progress"),
         "inreview" => Some("inreview"),
         "closed" | "done" | "resolved" => Some("closed"),
         "open" | "pending" | "blocked" | "deferred" => Some("open"),
-        _ => match category {
-            Some("wip") => Some("in_progress"),
-            Some("done") => Some("closed"),
-            _ => Some("open"),
-        },
+        _ => Some("open"),
     }
 }
 
@@ -2732,10 +2741,29 @@ mod tests {
     }
 
     #[test]
-    fn categories_do_not_change_builtin_alias_projection() {
-        for status in ["open", "pending", "blocked", "deferred", "in_progress", "hooked", "inreview", "closed", "done", "resolved", "tombstone"] {
+    fn categories_do_not_change_reserved_builtin_projection() {
+        for status in ["open", "blocked", "deferred", "in_progress", "hooked", "closed", "pinned"] {
             assert_eq!(status_summary_column(status, Some("done")), status_column(status));
         }
+    }
+
+    #[test]
+    fn configured_categories_override_permitted_legacy_alias_projection() {
+        let raw = [("pending", "done"), ("done", "active"), ("resolved", "frozen"), ("inreview", "wip")];
+        let definitions: Vec<serde_json::Value> = raw.iter()
+            .map(|(name, category)| serde_json::json!({"name":name,"category":category})).collect();
+        let beads: Vec<Bead> = raw.iter().enumerate().map(|(index, (status, _))| {
+            serde_json::from_value(serde_json::json!({"id":format!("b-{index}"),"title":"T","status":status})).unwrap()
+        }).collect();
+        let projected: Vec<(&str, i64)> = raw.iter().filter_map(|(status, category)| {
+            status_summary_column(status, Some(category)).map(|column| (column, 1))
+        }).collect();
+        let expected = BeadCounts { open: 2, in_progress: 1, inreview: 0, closed: 1 };
+        assert_eq!(counts_from_beads_with_statuses(&beads, &definitions), expected);
+        assert_eq!(counts_from_status_rows(&projected), expected);
+        assert_eq!(status_column("pending"), Some("open"));
+        assert_eq!(status_column("done"), Some("closed"));
+        assert_eq!(status_column("inreview"), Some("inreview"));
     }
 
     #[test]

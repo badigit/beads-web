@@ -65,6 +65,20 @@ describe('bd-owned pipeline stages', () => {
     expect(grouped.__proto__).toHaveLength(1);
   });
 
+  it('lets configured bd categories override legacy UI aliases', async () => {
+    const response = vi.spyOn(api.beads, 'read').mockResolvedValueOnce({
+      beads: [bead('finished', 'pending'), bead('available', 'done')],
+      custom_statuses: [{ name: 'pending', category: 'done' }, { name: 'done', category: 'active' }],
+    });
+    try {
+      const result = await loadProjectBeads('dolt://test', { withSource: true });
+      expect(result.beads.map(item => item.status)).toEqual(['pending', 'done']);
+      expect(result.beads.map(isDone)).toEqual([true, false]);
+    } finally {
+      response.mockRestore();
+    }
+  });
+
   it('uses bd categories for completion, WIP and blocking without rewriting stage names', async () => {
     const response = vi.spyOn(api.beads, 'read').mockResolvedValueOnce({
       beads: [bead('shipped', 'shipped'), bead('testing', 'qa'), bead('queued', 'queued'), bead('paused', 'on_hold')],
