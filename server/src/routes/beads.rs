@@ -110,6 +110,12 @@ pub struct BeadsParams {
 /// Relation type assumed when a dependency object carries no explicit type.
 const DEFAULT_DEP_TYPE: &str = "blocks";
 
+/// Hard edges from bd's `DependencyType.IsBlockingEdge` (v1.3.2).
+/// Parent-child is structural; association and custom types do not block.
+pub(crate) fn is_blocking_dependency_type(dep_type: &str) -> bool {
+    matches!(dep_type, "blocks" | "conditional-blocks" | "waits-for")
+}
+
 /// A normalized dependency edge: the target issue id plus the relation type.
 ///
 /// `bd` has emitted two different object shapes for `dependencies`; both are
@@ -1340,19 +1346,20 @@ fn post_process_beads(mut beads: Vec<Bead>) -> Vec<Bead> {
                     let mut related = Vec::new();
                     for dep in &edges {
                         match dep.dep_type.as_str() {
-                            "parent-child" => {
+                            "parent-child" | "parent" => {
                                 bead.parent_id = Some(dep.depends_on_id.clone());
                                 parent_to_children
                                     .entry(dep.depends_on_id.clone())
                                     .or_default()
                                     .push(bead.id.clone());
                             }
-                            "relates-to" => {
+                            "relates-to" | "related" => {
                                 related.push(dep.depends_on_id.clone());
                             }
-                            _ => {
+                            kind if is_blocking_dependency_type(kind) => {
                                 blocking.push(dep.depends_on_id.clone());
                             }
+                            _ => {}
                         }
                     }
                     if !blocking.is_empty() && bead.deps.is_none() {
@@ -2011,6 +2018,55 @@ mod tests {
         let bead: Bead = serde_json::from_str(json).unwrap();
         let processed = post_process_beads(vec![bead]);
         assert_eq!(processed[0].deps, Some(vec!["task-67".to_string()]));
+        assert_eq!(processed[0].parent_id, None);
+    }
+
+    #[test]
+    fn dependency_types_preserve_relations_in_both_cli_object_formats() {
+        // The export/list and show DTOs spell target/type differently.
+        for modern in [false, true] {
+            let edges: Vec<_> = [
+                "blocks", "conditional-blocks", "waits-for", "parent-child",
+                "related", "discovered-from", "tracks", "until", "caused-by",
+                "validates", "supersedes", "custom-edge",
+            ]
+            .iter()
+            .map(|kind| {
+                let target = format!("target-{kind}");
+                if modern {
+                    serde_json::json!({ "id": target, "dependency_type": kind })
+                } else {
+                    serde_json::json!({ "depends_on_id": target, "type": kind })
+                }
+            })
+            .collect();
+            let bead: Bead = serde_json::from_value(serde_json::json!({
+                "id": "work", "title": "Work", "status": "open", "dependencies": edges,
+            })).unwrap();
+            let processed = post_process_beads(vec![bead]);
+            let bead = &processed[0];
+            assert_eq!(bead.deps, Some(vec![
+                "target-blocks".to_string(),
+                "target-conditional-blocks".to_string(),
+                "target-waits-for".to_string(),
+            ]));
+            assert_eq!(bead.parent_id.as_deref(), Some("target-parent-child"));
+            assert_eq!(bead.relates_to, Some(vec!["target-related".to_string()]));
+        }
+    }
+
+    #[test]
+    fn informational_dependencies_leave_task_without_blockers() {
+        let bead: Bead = serde_json::from_value(serde_json::json!({
+            "id": "work", "title": "Work", "status": "open",
+            "dependencies": [
+                {"id": "origin", "dependency_type": "discovered-from"},
+                {"id": "tracked", "dependency_type": "tracks"},
+                {"id": "future", "dependency_type": "custom-edge"},
+            ],
+        })).unwrap();
+        let processed = post_process_beads(vec![bead]);
+        assert_eq!(processed[0].deps, None);
         assert_eq!(processed[0].parent_id, None);
     }
 

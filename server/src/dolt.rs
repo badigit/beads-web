@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 use crate::routes::activity::RawActivityRow;
 use crate::routes::all_beads::{IssueQuery, IssueRow};
-use crate::routes::beads::{Bead, Comment, DOLT_PATH_PREFIX};
+use crate::routes::beads::{is_blocking_dependency_type, Bead, Comment, DOLT_PATH_PREFIX};
 
 /// Connection parameters for a Dolt SQL server (central or per-project host).
 #[derive(Clone)]
@@ -977,23 +977,39 @@ async fn merge_dependencies(
         .await
         .map_err(|e| DoltError::QueryFailed(format!("dependencies: {}", e)))?;
 
+    fold_dependency_rows(
+        rows.iter().map(|row| {
+            (
+                get_str(row, "issue_id"),
+                get_str(row, "depends_on"),
+                get_str(row, "type"),
+            )
+        }),
+        beads,
+    );
+    Ok(())
+}
+
+fn fold_dependency_rows(
+    rows: impl IntoIterator<Item = (String, String, String)>,
+    beads: &mut [Bead],
+) {
     let mut parent_map: HashMap<String, String> = HashMap::new();
     let mut blocking_map: HashMap<String, Vec<String>> = HashMap::new();
     let mut related_map: HashMap<String, Vec<String>> = HashMap::new();
 
-    for row in &rows {
-        let issue_id = get_str(row, "issue_id");
-        let depends_on = get_str(row, "depends_on");
-        match get_str(row, "type").as_str() {
+    for (issue_id, depends_on, dep_type) in rows {
+        match dep_type.as_str() {
             "parent-child" | "parent" => {
                 parent_map.insert(issue_id, depends_on);
             }
             "relates-to" | "related" => {
                 related_map.entry(issue_id).or_default().push(depends_on);
             }
-            _ => {
+            kind if is_blocking_dependency_type(kind) => {
                 blocking_map.entry(issue_id).or_default().push(depends_on);
             }
+            _ => {}
         }
     }
 
@@ -1008,7 +1024,6 @@ async fn merge_dependencies(
             bead.relates_to = Some(r);
         }
     }
-    Ok(())
 }
 
 /// Folds raw `(issue_id, label)` rows into per-issue label lists.
@@ -1868,6 +1883,27 @@ mod tests {
     }
 
     // ── DependencySchema tests ─────────────────────────────────────────
+
+    #[test]
+    fn sql_dependency_rows_only_make_hard_edges_blocking() {
+        let bead: Bead = serde_json::from_value(serde_json::json!({
+            "id": "work", "title": "Work", "status": "open",
+        })).unwrap();
+        let mut beads = vec![bead];
+        let rows = [
+            "blocks", "conditional-blocks", "waits-for", "parent",
+            "related", "discovered-from", "tracks", "until", "caused-by",
+            "validates", "supersedes", "custom-edge",
+        ].map(|kind| ("work".to_string(), format!("target-{kind}"), kind.to_string()));
+        fold_dependency_rows(rows, &mut beads);
+        assert_eq!(beads[0].deps, Some(vec![
+            "target-blocks".to_string(),
+            "target-conditional-blocks".to_string(),
+            "target-waits-for".to_string(),
+        ]));
+        assert_eq!(beads[0].parent_id.as_deref(), Some("target-parent"));
+        assert_eq!(beads[0].relates_to, Some(vec!["target-related".to_string()]));
+    }
 
     fn cols(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| s.to_string()).collect()
