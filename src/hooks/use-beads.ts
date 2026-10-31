@@ -26,6 +26,7 @@ import {
   loadProjectBeads,
   groupBeadsByStatus,
   assignTicketNumbers,
+  applyStatusMetadata,
 } from "@/lib/beads-parser";
 import type { Bead, BeadStatus, CustomStatus } from "@/types";
 
@@ -193,7 +194,10 @@ export function useBeads(projectPath: string): UseBeadsResult {
       try {
         const result = await loadProjectBeads(projectPath, { updatedAfter, withSource: true });
         const fetched = result.beads;
-        const nextBeads = incremental ? mergeBeads(beadsRef.current, fetched) : fetched;
+        const nextBeads = applyStatusMetadata(
+          incremental ? mergeBeads(beadsRef.current, fetched) : fetched,
+          result.customStatuses,
+        );
         const nextCursor = maxUpdatedAt(fetched, lastUpdatedRef.current);
         const fullFetchAt = incremental ? lastFullFetchAtRef.current : Date.now();
 

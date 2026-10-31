@@ -381,19 +381,26 @@ pub struct BeadCounts {
 /// The kanban column a raw `bd` status belongs to, or `None` when the bead is
 /// hidden from the board entirely.
 ///
-/// This mirrors `STATUS_MAP` in `src/types/index.ts`. The home page used to
-/// download every bead and fold the statuses client-side; now the folding
-/// happens here, so the two tables MUST stay in sync or the donut and the
-/// board would disagree. Unknown statuses land in `open`, matching the
-/// frontend's "unknown status → open column + warning badge" behavior.
+/// Built-in aliases retain the legacy four-bucket summary projection.
 fn status_column(raw_status: &str) -> Option<&'static str> {
+    status_summary_column(raw_status, None)
+}
+
+/// Project bd-owned categories onto the existing home-page summary buckets.
+/// Frozen, unspecified and unregistered custom stages remain in Open: the
+/// four-bucket summary has no parked-work bucket and must not call them done.
+pub(crate) fn status_summary_column(raw_status: &str, category: Option<&str>) -> Option<&'static str> {
     match raw_status {
         "tombstone" => None,
         "in_progress" | "hooked" => Some("in_progress"),
         "inreview" => Some("inreview"),
         "closed" | "done" | "resolved" => Some("closed"),
-        // "open", "pending", "blocked", "deferred" and anything unrecognized.
-        _ => Some("open"),
+        "open" | "pending" | "blocked" | "deferred" => Some("open"),
+        _ => match category {
+            Some("wip") => Some("in_progress"),
+            Some("done") => Some("closed"),
+            _ => Some("open"),
+        },
     }
 }
 
@@ -422,10 +429,20 @@ fn counts_from_status_rows<S: AsRef<str>>(rows: &[(S, i64)]) -> BeadCounts {
 
 /// Folds a materialized bead list into column totals. Used by the tiers that
 /// have no cheap aggregate (bd CLI, JSONL) and must count in memory.
+#[cfg(test)]
 fn counts_from_beads(beads: &[Bead]) -> BeadCounts {
+    counts_from_beads_with_statuses(beads, &[])
+}
+
+fn counts_from_beads_with_statuses(beads: &[Bead], statuses: &[serde_json::Value]) -> BeadCounts {
+    let categories: HashMap<&str, &str> = statuses.iter().filter_map(|status| {
+        Some((status.get("name")?.as_str()?, status.get("category")?.as_str()?))
+    }).collect();
     let mut counts = BeadCounts::default();
     for bead in beads {
-        counts.add(&bead.status, 1);
+        if let Some(column) = status_summary_column(&bead.status, categories.get(bead.status.as_str()).copied()) {
+            counts.add(column, 1);
+        }
     }
     counts
 }
@@ -665,8 +682,8 @@ pub async fn read_beads(
         return match dolt_manager.read_beads(db_name).await {
             Ok(beads) => {
                 let beads = post_process_beads(beads);
-                upsert_counts_cache(&db, &path, "dolt-direct", &counts_from_beads(&beads));
                 let (custom_statuses, custom_statuses_error) = read_status_metadata(&dolt_manager, &path).await;
+                upsert_counts_cache(&db, &path, "dolt-direct", &counts_from_beads_with_statuses(&beads, &custom_statuses));
                 (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": "dolt-direct", "custom_statuses": custom_statuses, "custom_statuses_error": custom_statuses_error })))
             }
             Err(e) => (
@@ -687,8 +704,8 @@ pub async fn read_beads(
     .await
     {
         Ok(BeadsRead { beads, source }) => {
-            upsert_counts_cache(&db, &path, source, &counts_from_beads(&beads));
             let (custom_statuses, custom_statuses_error) = read_status_metadata(&dolt_manager, &path).await;
+            upsert_counts_cache(&db, &path, source, &counts_from_beads_with_statuses(&beads, &custom_statuses));
             (StatusCode::OK, Json(serde_json::json!({ "beads": beads, "source": source, "custom_statuses": custom_statuses, "custom_statuses_error": custom_statuses_error })))
         }
         Err(err) => err,
@@ -993,7 +1010,8 @@ async fn resolve_bead_counts(
     // Fallback: bd CLI / JSONL have no cheap aggregate, so read and count.
     let BeadsRead { beads, source } =
         read_beads_cascade(dolt_manager, path, &project_path, None).await?;
-    Ok((counts_from_beads(&beads), source))
+    let (custom_statuses, _) = read_status_metadata(dolt_manager, path).await;
+    Ok((counts_from_beads_with_statuses(&beads, &custom_statuses), source))
 }
 
 /// GET /api/beads/labels?path=/path/to/project
@@ -2689,6 +2707,35 @@ mod tests {
                 closed: 9,
             }
         );
+    }
+
+    #[test]
+    fn category_projection_matches_aggregate_and_materialized_cache_reads() {
+        let definitions = vec![
+            serde_json::json!({"name":"queued", "category":"active"}),
+            serde_json::json!({"name":"qa", "category":"wip"}),
+            serde_json::json!({"name":"shipped", "category":"done"}),
+            serde_json::json!({"name":"on_hold", "category":"frozen"}),
+            serde_json::json!({"name":"legacy", "category":"unspecified"}),
+        ];
+        let raw = [("queued", "active"), ("qa", "wip"), ("shipped", "done"),
+            ("on_hold", "frozen"), ("legacy", "unspecified")];
+        let beads: Vec<Bead> = raw.iter().enumerate().map(|(index, (status, _))| {
+            serde_json::from_value(serde_json::json!({"id":format!("b-{index}"),"title":"T","status":status})).unwrap()
+        }).collect();
+        let projected: Vec<(&str, i64)> = raw.iter().filter_map(|(status, category)| {
+            status_summary_column(status, Some(category)).map(|column| (column, 1))
+        }).collect();
+        let materialized = counts_from_beads_with_statuses(&beads, &definitions);
+        assert_eq!(materialized, counts_from_status_rows(&projected));
+        assert_eq!(materialized, BeadCounts { open: 3, in_progress: 1, inreview: 0, closed: 1 });
+    }
+
+    #[test]
+    fn categories_do_not_change_builtin_alias_projection() {
+        for status in ["open", "pending", "blocked", "deferred", "in_progress", "hooked", "inreview", "closed", "done", "resolved", "tombstone"] {
+            assert_eq!(status_summary_column(status, Some("done")), status_column(status));
+        }
     }
 
     #[test]

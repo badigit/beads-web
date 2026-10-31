@@ -203,7 +203,7 @@ impl DoltManager {
         query_custom_statuses(&mut conn, db_name).await
     }
 
-    /// Aggregates issues per raw status without transferring any issue rows.
+    /// Aggregates issues into the four category-aware summary buckets.
     ///
     /// This is the cheap counterpart of [`read_beads`](Self::read_beads) used by
     /// `GET /api/beads/counts`: the home page only needs four numbers, so the
@@ -689,12 +689,8 @@ async fn ensure_database_exists(
     Ok(())
 }
 
-/// Runs `SELECT status, COUNT(*) … GROUP BY status` and returns the raw
-/// `(status, count)` pairs.
-///
-/// Mapping raw statuses onto the four kanban columns is deliberately left to
-/// the caller (`routes::beads`) so that the SQL tiers and the in-memory tiers
-/// share exactly one mapping implementation.
+/// Aggregates statuses on the server, then projects categories with the same
+/// helper used for materialized reads. Transfers no individual issue rows.
 async fn query_status_counts(
     conn: &mut mysql_async::Conn,
     db_name: &str,
@@ -713,14 +709,19 @@ async fn query_status_counts(
         .await
         .map_err(|e| DoltError::QueryFailed(format!("status counts: {}", e)))?;
 
+    let custom = query_custom_statuses(conn, db_name).await?;
+    let categories: HashMap<&str, &str> = custom.iter()
+        .map(|(name, category)| (name.as_str(), category.as_str())).collect();
+
     Ok(rows
         .iter()
-        .map(|row| {
+        .filter_map(|row| {
             // A NULL status is treated as "open" downstream, matching the
             // default applied by `query_issues`.
             let status = get_str(row, "status");
             let count = row.get::<i64, _>("cnt").unwrap_or(0);
-            (status, count)
+            crate::routes::beads::status_summary_column(&status, categories.get(status.as_str()).copied())
+                .map(|column| (column.to_string(), count))
         })
         .collect())
 }

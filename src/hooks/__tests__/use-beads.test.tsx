@@ -89,6 +89,7 @@ describe('useBeads — cold start (cache miss)', () => {
     unmount();
     const revisited = renderHook(() => useBeads('/stages'));
     expect(revisited.result.current.customStatuses).toEqual([{ name: 'qa', category: 'wip' }]);
+    revisited.unmount();
   });
 
   it('shows the loading state and does a full fetch', async () => {
@@ -183,6 +184,25 @@ describe('useBeads — warm start (cache hit, stale-while-revalidate)', () => {
 });
 
 describe('useBeads — incremental fetching', () => {
+  it('reclassifies unchanged cached beads when only a custom stage category changes', async () => {
+    loadProjectBeadsMock.mockResolvedValue({
+      beads: [bead('a-1', { status: 'qa', updated_at: '2026-02-01T00:00:00Z' })],
+      customStatuses: [{ name: 'qa', category: 'wip' }],
+    });
+    const { result } = renderHook(() => useBeads('/category-change'));
+    await waitFor(() => expect(result.current.beads[0]?._statusCategory).toBe('wip'));
+    loadProjectBeadsMock.mockResolvedValue({
+      beads: [], customStatuses: [{ name: 'qa', category: 'done' }],
+    });
+    await act(async () => { await result.current.refresh({ incremental: true }); });
+    expect(updatedAfterOfCall(1)).toBe('2026-02-01T00:00:00Z');
+    expect(result.current.beads[0]).toMatchObject({ id: 'a-1', status: 'qa', _statusCategory: 'done' });
+    expect(getCachedBeads('/category-change')?.beads[0]._statusCategory).toBe('done');
+    loadProjectBeadsMock.mockResolvedValue({ beads: [], customStatuses: [] });
+    await act(async () => { await result.current.refresh({ incremental: true }); });
+    expect(result.current.beads[0]._statusCategory).toBeUndefined();
+  });
+
   it('passes updated_after on the refresh that follows a full load', async () => {
     loadProjectBeadsMock.mockResolvedValue([
       bead('a-1', { updated_at: '2026-02-01T00:00:00Z' }),

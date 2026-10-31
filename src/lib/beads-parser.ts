@@ -114,20 +114,26 @@ export interface LoadProjectBeadsResult {
   statusesError?: string | null;
 }
 
+/** Reapply current workflow metadata after merging an incremental bead delta. */
+export function applyStatusMetadata(beads: Bead[], statuses: CustomStatus[] = []): Bead[] {
+  const custom = new Map(statuses.map(status => [status.name, status]));
+  const mapped: Bead[] = [];
+  for (const bead of beads) {
+    const raw = bead._originalStatus ?? bead.status;
+    const next = mapBeadStatus({
+      ...bead, status: raw, comments: bead.comments ?? [],
+      _originalStatus: undefined, _statusCategory: undefined, _statusBadge: undefined,
+    }, custom.get(raw));
+    if (next !== null) mapped.push(next);
+  }
+  return mapped;
+}
+
 export async function loadProjectBeads(projectPath: string, options?: { updatedAfter?: string }): Promise<Bead[]>;
 export async function loadProjectBeads(projectPath: string, options: { withSource: true; updatedAfter?: string }): Promise<LoadProjectBeadsResult>;
 export async function loadProjectBeads(projectPath: string, options?: { withSource?: true; updatedAfter?: string }): Promise<Bead[] | LoadProjectBeadsResult> {
   const result = await api.beads.read(projectPath, options?.updatedAfter);
-  const customStatuses = new Map(result.custom_statuses?.map(status => [status.name, status]));
-  // Map statuses, filter tombstones, ensure comments array
-  const mapped: Bead[] = [];
-  for (const bead of result.beads) {
-    const withComments = { ...bead, comments: bead.comments ?? [] };
-    const mappedBead = mapBeadStatus(withComments, customStatuses.get(bead.status));
-    if (mappedBead !== null) {
-      mapped.push(mappedBead);
-    }
-  }
+  const mapped = applyStatusMetadata(result.beads, result.custom_statuses);
   if (options?.withSource) {
     return { beads: mapped, source: result.source, customStatuses: result.custom_statuses ?? [], statusesError: result.custom_statuses_error };
   }
