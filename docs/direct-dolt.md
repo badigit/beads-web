@@ -2,6 +2,28 @@
 
 The primary Windows deployment uses a single embedded frontend/backend binary and reads Beads databases directly from the central Dolt server.
 
+## Issue writes
+
+Direct SQL is a read path. Creation and status changes use the installed `bd` CLI.
+This keeps close/reopen fields, dependency updates and events under the Beads write contract.
+Do not replace these commands with SQL updates: a Dolt commit alone does not run that logic.
+
+For a `dolt://` project, the server creates a temporary workspace that selects the existing database.
+It passes the configured connection and password to the child process without storing the password.
+Explicit `--repo=.` prevents contributor routing to another database.
+The context disables local exports, Git operations and automatic backups, then is removed after the command.
+It does not inherit another checkout's hooks or local settings. Global Beads settings still apply.
+The optional durable events journal must therefore be enabled globally to cover this path.
+
+No additional service is required. `bd serve` remains an option if process startup becomes a measured bottleneck.
+See the [Beads mutation and API contracts](https://github.com/gastownhall/beads/releases/tag/v1.3.0).
+SQL reads remain available when the CLI is missing; writes return an error instead of falling back to SQL.
+After a write timeout, reload the issue before retrying: the command may already have committed.
+
+The opt-in test `live_bd_mutations_preserve_blocked_state_and_lifecycle` exercises the actual CLI and HTTP handlers.
+Provision an isolated database, set `BEADS_WEB_TEST_DATABASE=bweb_tsw_verify_<unique>`, and run that ignored Cargo test.
+It verifies creation without a description, a blocking dependency, close/reopen fields and failed writes.
+
 ## Build
 
 ```powershell

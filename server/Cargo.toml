@@ -39,7 +39,7 @@ regex = "1"
 mysql_async = { version = "0.37", default-features = false, features = ["minimal-rust"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
-[dev-dependencies]
+# Disposable bd contexts for databases without a local checkout.
 tempfile = "3"
 
 # Урезанная отладочная информация. Замер 2026-07-25, холодная

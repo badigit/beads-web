@@ -1052,7 +1052,7 @@ pub struct CreateBeadRequest {
 
 /// POST /api/beads/create
 ///
-/// Creates a new bead. For `dolt://` paths, inserts directly via Dolt SQL.
+/// Creates a new bead through bd. A `dolt://` path selects a disposable server context.
 /// For filesystem paths, delegates to `bd create` CLI.
 pub async fn create_bead_handler(
     Extension(dolt_manager): Extension<Arc<DoltManager>>,
@@ -1211,7 +1211,7 @@ fn cli_only_fields(req: &UpdateBeadRequest) -> bool {
 
 /// PATCH /api/beads/update
 ///
-/// Updates a bead's fields. For `dolt://` paths, updates via Dolt SQL.
+/// Updates through bd, including lifecycle fields and dependent blocked-state.
 /// For filesystem paths, delegates to `bd update` CLI.
 pub async fn update_bead_handler(
     Extension(dolt_manager): Extension<Arc<DoltManager>>,
@@ -1235,7 +1235,7 @@ pub async fn update_bead_handler(
         );
     }
 
-    // Dolt-only path: update via SQL
+    // The Dolt manager selects this database for the supported bd mutation path.
     if let Some(db_name) = req.path.strip_prefix(DOLT_PATH_PREFIX) {
         if cli_only_fields(&req) {
             return (

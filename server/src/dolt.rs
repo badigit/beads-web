@@ -4,7 +4,7 @@
 //! with database discovery via `SHOW DATABASES`.
 
 use mysql_async::prelude::*;
-use mysql_async::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row, TxOpts};
+use mysql_async::{Opts, OptsBuilder, Pool, PoolConstraints, PoolOpts, Row};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -325,7 +325,7 @@ impl DoltManager {
             }))
     }
 
-    /// Creates a new bead in a Dolt database and commits the change.
+    /// Creates through bd so parent links, events and blocked-state use its contract.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_bead(
         &self,
@@ -337,154 +337,31 @@ impl DoltManager {
         priority: i32,
         parent_id: Option<&str>,
     ) -> Result<(), DoltError> {
-        validate_database_name(db_name)?;
-        let mut conn = self
-            .pool
-            .get_conn()
-            .await
-            .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
-
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-
-        // First, query the table schema to find all NOT NULL columns without defaults
-        // so we can provide empty values for them
-        let schema_query = "SELECT COLUMN_NAME FROM information_schema.COLUMNS \
-             WHERE TABLE_SCHEMA = :db AND TABLE_NAME = 'issues' \
-             AND IS_NULLABLE = 'NO' AND COLUMN_DEFAULT IS NULL \
-             AND COLUMN_NAME NOT IN ('id', 'title', 'description', 'status', 'priority', \
-             'issue_type', 'owner', 'created_at', 'updated_at')";
-        let extra_cols: Vec<String> = conn
-            .exec_map(
-                schema_query,
-                mysql_async::params! { "db" => db_name },
-                |col_name: String| col_name,
-            )
-            .await
-            .unwrap_or_default();
-
-        // Build INSERT with all required columns
-        let mut columns = vec![
-            "id",
-            "title",
-            "description",
-            "status",
-            "priority",
-            "issue_type",
-            "owner",
-            "created_at",
-            "updated_at",
+        let mut args = vec![
+            "create".to_string(),
+            format!("--id={id}"),
+            format!("--title={title}"),
+            format!("--description={}", text_or_empty(description)),
+            format!("--type={issue_type}"),
+            format!("--priority={priority}"),
+            "--repo=.".to_string(),
+            "--json".to_string(),
         ];
-        let mut values = vec![
-            ":id",
-            ":title",
-            ":desc",
-            "'open'",
-            ":priority",
-            ":type",
-            "'web-ui'",
-            ":now",
-            ":now",
-        ];
-
-        // Add empty string for any extra NOT NULL columns
-        for col in &extra_cols {
-            columns.push(col);
-            values.push("''");
+        if let Some(parent) = parent_id {
+            args.push(format!("--parent={parent}"));
         }
-
-        // Dependency layout must be introspected before the transaction starts,
-        // since the transaction takes exclusive hold of the connection.
-        let dep_schema = match parent_id {
-            Some(_) => Some(detect_dependency_schema(&mut conn, db_name).await),
-            None => None,
-        };
-
-        let query = format!(
-            "INSERT INTO `{}`.issues ({}) VALUES ({})",
-            db_name,
-            columns
-                .iter()
-                .map(|c| format!("`{}`", c))
-                .collect::<Vec<_>>()
-                .join(", "),
-            values.join(", "),
-        );
-        let mut tx = conn
-            .start_transaction(TxOpts::default())
-            .await
-            .map_err(|e| DoltError::QueryFailed(format!("start_transaction: {}", e)))?;
-        tx.exec_drop(
-            &query,
-            mysql_async::params! {
-                "id" => id,
-                "title" => title,
-                "desc" => text_or_empty(description),
-                "priority" => priority,
-                "type" => issue_type,
-                "now" => &now,
-            },
-        )
-        .await
-        .map_err(|e| DoltError::QueryFailed(format!("insert: {}", e)))?;
-
-        // Insert parent-child dependency if parent specified
-        if let (Some(parent), Some(dep_schema)) = (parent_id, dep_schema.as_ref()) {
-            let mut dep_columns = vec![
-                "issue_id".to_string(),
-                dep_schema.target_column.clone(),
-                "type".to_string(),
-                "created_by".to_string(),
-            ];
-            let mut dep_values = vec![":child", ":parent", "'parent-child'", ":created_by"];
-            // v53+ surrogate primary key has no default — generate one.
-            let dep_id = uuid::Uuid::new_v4().to_string();
-            if dep_schema.has_surrogate_id {
-                dep_columns.insert(0, "id".to_string());
-                dep_values.insert(0, ":dep_id");
-            }
-
-            let dep_query = format!(
-                "INSERT INTO `{}`.dependencies ({}) VALUES ({})",
-                db_name,
-                dep_columns
-                    .iter()
-                    .map(|c| format!("`{}`", c))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                dep_values.join(", "),
-            );
-            tx.exec_drop(
-                &dep_query,
-                mysql_async::params! {
-                    "child" => id,
-                    "parent" => parent,
-                    "created_by" => "web-ui",
-                    "dep_id" => &dep_id,
-                },
-            )
-            .await
-            .map_err(|e| DoltError::QueryFailed(format!("dependency: {}", e)))?;
+        let output = self.run_bd_mutation(db_name, &args).await?;
+        let created: serde_json::Value = serde_json::from_str(&output)
+            .map_err(|_| DoltError::QueryFailed("bd create returned invalid JSON".to_string()))?;
+        if created.get("id").and_then(|v| v.as_str()) != Some(id) {
+            return Err(DoltError::QueryFailed(
+                "bd create did not confirm the requested issue ID".to_string(),
+            ));
         }
-
-        tx.commit()
-            .await
-            .map_err(|e| DoltError::QueryFailed(format!("transaction_commit: {}", e)))?;
-
-        // Dolt commit — must USE the database first
-        let use_query = format!("USE `{}`", db_name);
-        conn.query_drop(&use_query)
-            .await
-            .map_err(|e| DoltError::QueryFailed(format!("use_db: {}", e)))?;
-        let commit_query = format!("CALL DOLT_COMMIT('-Am', 'web-ui: create {}')", id);
-        conn.query_drop(&commit_query)
-            .await
-            .map_err(|e| DoltError::QueryFailed(format!("dolt_commit: {}", e)))?;
-
-        info!("Created bead {} in Dolt (db: {})", id, db_name);
         Ok(())
     }
 
-    /// Updates a bead's fields in a Dolt database and commits the change.
+    /// Updates through bd, including close/reopen and dependent-blocked-state repair.
     pub async fn update_bead(
         &self,
         db_name: &str,
@@ -493,62 +370,55 @@ impl DoltManager {
         description: Option<&str>,
         status: Option<&str>,
     ) -> Result<(), DoltError> {
-        validate_database_name(db_name)?;
-        let mut sets = Vec::new();
-        let mut params: Vec<(Vec<u8>, mysql_async::Value)> = Vec::new();
-
-        if let Some(t) = title {
-            sets.push("title = :title".to_string());
-            params.push((b"title".to_vec(), t.into()));
+        if id.is_empty()
+            || !id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+            || id.starts_with('-')
+        {
+            return Err(DoltError::QueryFailed("Invalid bead ID".to_string()));
         }
-        if let Some(d) = description {
-            sets.push("description = :desc".to_string());
-            params.push((b"desc".to_vec(), d.into()));
+        let mut args = vec!["update".to_string(), id.to_string(), "--json".to_string()];
+        if let Some(title) = title {
+            args.push(format!("--title={title}"));
         }
-        if let Some(s) = status {
-            sets.push("status = :status".to_string());
-            params.push((b"status".to_vec(), s.into()));
+        if let Some(description) = description {
+            args.push(format!("--description={description}"));
         }
-
-        if sets.is_empty() {
+        if let Some(status) = status {
+            args.push(format!("--status={status}"));
+        }
+        if args.len() == 3 {
             return Ok(());
         }
-
-        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
-        sets.push("updated_at = :now".to_string());
-        params.push((b"now".to_vec(), now.into()));
-        params.push((b"id".to_vec(), id.into()));
-
-        let mut conn = self
-            .pool
-            .get_conn()
-            .await
-            .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
-
-        let query = format!(
-            "UPDATE `{}`.issues SET {} WHERE id = :id",
-            db_name,
-            sets.join(", ")
-        );
-        conn.exec_drop(
-            &query,
-            mysql_async::Params::Named(params.into_iter().collect()),
-        )
-        .await
-        .map_err(|e| DoltError::QueryFailed(format!("update: {}", e)))?;
-
-        // Dolt commit — must USE the database first
-        let use_query = format!("USE `{}`", db_name);
-        conn.query_drop(&use_query)
-            .await
-            .map_err(|e| DoltError::QueryFailed(format!("use_db: {}", e)))?;
-        let commit_query = format!("CALL DOLT_COMMIT('-Am', 'web-ui: update {}')", id);
-        conn.query_drop(&commit_query)
-            .await
-            .map_err(|e| DoltError::QueryFailed(format!("dolt_commit: {}", e)))?;
-
-        info!("Updated bead {} in Dolt (db: {})", id, db_name);
+        self.run_bd_mutation(db_name, &args).await?;
         Ok(())
+    }
+
+    /// A disposable CLI workspace selects an existing database without bd init,
+    /// a checkout, a second service, or a stored password. Never fall back to SQL.
+    async fn run_bd_mutation(&self, db_name: &str, args: &[String]) -> Result<String, DoltError> {
+        validate_database_name(db_name)?;
+        let mut conn = self.pool.get_conn().await
+            .map_err(|e| DoltError::ConnectionFailed(e.to_string()))?;
+        ensure_database_exists(&mut conn, db_name).await?;
+        drop(conn);
+
+        let workspace = mutation_workspace(&self.config, db_name)
+            .map_err(|e| DoltError::QueryFailed(format!("prepare bd workspace: {e}")))?;
+        let mut command = mutation_command(&self.config, workspace.path(), args);
+        let result = tokio::time::timeout(Duration::from_secs(30), command.output()).await;
+        match result {
+            Ok(Ok(output)) if output.status.success() => String::from_utf8(output.stdout)
+                .map_err(|_| DoltError::QueryFailed("bd returned invalid UTF-8".to_string())),
+            Ok(Ok(output)) => Err(DoltError::QueryFailed(format!(
+                "bd mutation failed ({}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim(),
+            ))),
+            Ok(Err(error)) => Err(DoltError::QueryFailed(format!("start bd: {error}"))),
+            Err(_) => Err(DoltError::QueryFailed(
+                "bd mutation timed out after 30s; refresh the issue before retrying".to_string(),
+            )),
+        }
     }
 
     /// Runs a case-insensitive substring search over `id` and `title` in one
@@ -608,14 +478,54 @@ pub struct SearchRow {
 /// caller-supplied names is deliberate — the split version rejected `-` on the
 /// `read_beads` / `issue_prefix` paths while allowing it on the search path,
 /// which broke those paths for hyphenated databases (bweb-489.14).
+/// Creates only disposable routing metadata; credentials stay in the child environment.
+fn mutation_workspace(config: &DoltConnectConfig, db_name: &str) -> std::io::Result<tempfile::TempDir> {
+    let workspace = tempfile::Builder::new().prefix("beads-web-mutation-").tempdir()?;
+    let beads_dir = workspace.path().join(".beads");
+    std::fs::create_dir(&beads_dir)?;
+    let metadata = serde_json::json!({
+        "database": "dolt",
+        "backend": "dolt",
+        "dolt_mode": "server",
+        "dolt_database": db_name,
+        "dolt_server_host": config.host,
+        "dolt_server_port": config.port,
+        "dolt_server_user": config.user,
+    });
+    std::fs::write(beads_dir.join("metadata.json"), metadata.to_string())?;
+    // Disable local artifacts and Git operations, without changing shared DB config.
+    std::fs::write(beads_dir.join("config.yaml"),
+        "no-git-ops: true\nexport:\n  auto: false\n  git-add: false\nbackup:\n  enabled: false\n")?;
+    Ok(workspace)
+}
+
+fn mutation_command(
+    config: &DoltConnectConfig,
+    workspace: &Path,
+    args: &[String],
+) -> tokio::process::Command {
+    let mut command = crate::process::hidden_command(crate::config::bd_command_path());
+    command.args(args).arg("--actor=web-ui")
+        .current_dir(workspace)
+        .env("BEADS_DIR", workspace.join(".beads"))
+        .env("BEADS_DOLT_SERVER_HOST", &config.host)
+        .env("BEADS_DOLT_SERVER_PORT", config.port.to_string())
+        .env("BEADS_DOLT_SERVER_USER", &config.user)
+        .env_remove("BEADS_DOLT_SERVER_SOCKET")
+        .env_remove("BEADS_DOLT_SHARED_SERVER")
+        .kill_on_drop(true);
+    if let Some(password) = &config.password {
+        command.env("BEADS_DOLT_PASSWORD", password);
+    } else {
+        command.env_remove("BEADS_DOLT_PASSWORD");
+    }
+    command
+}
+
 /// Пустая строка вместо отсутствующего значения для текстовой колонки.
 ///
-/// В схеме v53 `issues.description`, `title`, `design` и `notes` объявлены
-/// NOT NULL без DEFAULT, и `Option::None` уезжает в базу как NULL — Dolt отвечает
-/// `column name description is non-nullable but attempted to set a value of null`
-/// (bweb-qkh). Автозаполнение пустыми строками по `information_schema` в
-/// `create_bead` до этой колонки не доходит: она намеренно исключена из запроса
-/// схемы, потому что значение для неё подставляет вызывающая сторона.
+/// В интерфейсе отсутствие описания означает пустой текст (bweb-qkh).
+/// CLI получает явное значение, как и прежний SQL-путь.
 fn text_or_empty(value: Option<&str>) -> &str {
     value.unwrap_or("")
 }
@@ -1805,6 +1715,99 @@ pub fn index_local_projects(roots: &[PathBuf], max_depth: usize) -> HashMap<Stri
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// Run only against an explicitly provisioned disposable database.
+    #[tokio::test]
+    #[ignore = "requires BEADS_WEB_TEST_DATABASE=bweb_tsw_verify_<unique> on a disposable store"]
+    async fn live_bd_mutations_preserve_blocked_state_and_lifecycle() {
+        use axum::{extract::Extension, response::IntoResponse, Json};
+        use crate::routes::beads::{create_bead_handler, update_bead_handler,
+            CreateBeadRequest, UpdateBeadRequest};
+
+        let database = std::env::var("BEADS_WEB_TEST_DATABASE").expect("explicit test database");
+        assert!(database.starts_with("bweb_tsw_verify_"));
+        let manager = Arc::new(DoltManager::new());
+        assert!(manager.check_server().await);
+        let path = format!("dolt://{database}");
+        let mut ids = Vec::new();
+        for title in ["Blocker 'quoted' Кириллица", "Dependent"] {
+            let response = create_bead_handler(Extension(manager.clone()), Json(CreateBeadRequest {
+                path: path.clone(), title: title.to_string(), description: None,
+                issue_type: Some("task".to_string()), priority: Some(2), parent_id: None,
+            })).await.into_response();
+            let status = response.status();
+            let body = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+            assert_eq!(status, axum::http::StatusCode::CREATED, "{}", String::from_utf8_lossy(&body));
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            ids.push(body["id"].as_str().unwrap().to_string());
+        }
+        manager.run_bd_mutation(&database, &[
+            "dep".to_string(), "add".to_string(), ids[1].clone(), ids[0].clone(),
+        ]).await.unwrap();
+        let mut conn = manager.pool.get_conn().await.unwrap();
+        let blocked: Option<i64> = conn.query_first(format!(
+            "SELECT is_blocked FROM `{database}`.issues WHERE id='{}'", ids[1])).await.unwrap();
+        assert_eq!(blocked, Some(1));
+
+        for (status, closed, expected_blocked) in [("closed", true, 0), ("open", false, 1)] {
+            let response = update_bead_handler(Extension(manager.clone()), Json(UpdateBeadRequest {
+                path: path.clone(), id: ids[0].clone(), status: Some(status.to_string()),
+                title: None, description: None, due: None, defer: None, estimate: None,
+            })).await.into_response();
+            let response_status = response.status();
+            let body = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+            assert_eq!(response_status, axum::http::StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+            let actual: Option<(String, i64)> = conn.query_first(format!(
+                "SELECT status, closed_at IS NOT NULL FROM `{database}`.issues WHERE id='{}'", ids[0]
+            )).await.unwrap();
+            assert_eq!(actual, Some((status.to_string(), i64::from(closed))));
+            let blocked: Option<i64> = conn.query_first(format!(
+                "SELECT is_blocked FROM `{database}`.issues WHERE id='{}'", ids[1])).await.unwrap();
+            assert_eq!(blocked, Some(expected_blocked));
+        }
+        let failed = manager.update_bead(&database, "--help", None, None, Some("closed")).await;
+        assert!(failed.is_err());
+        let failed = manager.update_bead(&database, "missing-issue", None, None, Some("closed")).await;
+        assert!(failed.is_err());
+        let events: Option<i64> = conn.query_first(format!(
+            "SELECT COUNT(*) FROM `{database}`.events WHERE issue_id='{}'", ids[0])).await.unwrap();
+        assert!(events.unwrap() >= 3);
+    }
+
+    #[test]
+    fn mutation_context_selects_exact_server_without_persisting_password() {
+        let config = DoltConnectConfig {
+            host: "dolt.example".to_string(), port: 3308,
+            user: "writer".to_string(), password: Some("test-secret".to_string()),
+        };
+        let workspace = mutation_workspace(&config, "beads_second").unwrap();
+        let path = workspace.path().to_path_buf();
+        let raw = std::fs::read_to_string(path.join(".beads/metadata.json")).unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(metadata["dolt_database"], "beads_second");
+        assert_eq!(metadata["dolt_server_host"], "dolt.example");
+        assert_eq!(metadata["dolt_server_port"], 3308);
+        assert_eq!(metadata["dolt_mode"], "server");
+        assert!(!raw.contains("test-secret"));
+        drop(workspace);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn mutation_child_overrides_inherited_workspace_and_connection() {
+        let config = DoltConnectConfig {
+            host: "dolt.example".to_string(), port: 3308,
+            user: "writer".to_string(), password: None,
+        };
+        let workspace = mutation_workspace(&config, "beads_second").unwrap();
+        let command = mutation_command(&config, workspace.path(), &["update".to_string()]);
+        let env: std::collections::HashMap<_, _> = command.as_std().get_envs().collect();
+        assert_eq!(env.get(std::ffi::OsStr::new("BEADS_DIR")),
+            Some(&Some(workspace.path().join(".beads").as_os_str())));
+        assert_eq!(env.get(std::ffi::OsStr::new("BEADS_DOLT_SERVER_PORT")),
+            Some(&Some(std::ffi::OsStr::new("3308"))));
+        assert_eq!(env.get(std::ffi::OsStr::new("BEADS_DOLT_PASSWORD")), Some(&None));
+    }
 
     /// Бид без описания раньше уходил в INSERT как NULL и падал на NOT NULL
     /// колонке схемы v53 (bweb-qkh).
